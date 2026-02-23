@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import readline from 'readline';
+import { fileURLToPath } from 'url';
 
 // ── ANSI helpers ────────────────────────────────────────────────────────────
 const c = {
@@ -19,7 +20,7 @@ const c = {
 };
 
 const PROJECT_ROOT = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   '..',
 );
 

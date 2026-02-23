@@ -2,13 +2,14 @@ import fs, { mkdirSync } from 'fs';
 import https from 'https';
 import path from 'path';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
 
 import { readEnvFile } from './env.js';
 
 // ── Upload directory ────────────────────────────────────────────────────────
 
 export const UPLOADS_DIR = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   '..',
   'workspace',
   'uploads',

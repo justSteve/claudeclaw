@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 // ── ANSI helpers ────────────────────────────────────────────────────────────
 const c = {
@@ -18,7 +19,7 @@ const c = {
 };
 
 const PROJECT_ROOT = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   '..',
 );
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -9,16 +9,13 @@ import readline from 'readline';
 const c = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',
-  dim: '\x1b[2m',
   red: '\x1b[31m',
   green: '\x1b[32m',
   yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
   cyan: '\x1b[36m',
   white: '\x1b[37m',
-  bgBlack: '\x1b[40m',
   gray: '\x1b[90m',
+  blue: '\x1b[34m',
 };
 
 const PROJECT_ROOT = path.resolve(
@@ -26,46 +23,16 @@ const PROJECT_ROOT = path.resolve(
   '..',
 );
 
-// ── Banner — reads from banner.txt, falls back to text ────────────────────
+// ── Banner ───────────────────────────────────────────────────────────────────
 function loadBanner(): string {
   try {
     return fs.readFileSync(path.join(PROJECT_ROOT, 'banner.txt'), 'utf-8');
   } catch {
-    return `
-  ClaudeClaw
-  ──────────
-  Your Claude Code CLI. In your pocket.
-`;
+    return '\n  ClaudeClaw\n';
   }
 }
 
-// ── Utilities ───────────────────────────────────────────────────────────────
-
-function spinner(
-  label: string,
-): { stop: (status: 'ok' | 'fail' | 'warn', msg?: string) => void } {
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-  let i = 0;
-  const iv = setInterval(() => {
-    process.stdout.write(
-      `\r  ${c.cyan}${frames[i++ % frames.length]}${c.reset}  ${label}   `,
-    );
-  }, 80);
-  return {
-    stop(status, msg) {
-      clearInterval(iv);
-      const icon =
-        status === 'ok'
-          ? `${c.green}✓${c.reset}`
-          : status === 'warn'
-            ? `${c.yellow}⚠${c.reset}`
-            : `${c.red}✗${c.reset}`;
-      process.stdout.write(`\r  ${icon}  ${msg ?? label}\n`);
-    },
-  };
-}
-
-// Single shared readline interface — never create more than one.
+// ── Shared readline ──────────────────────────────────────────────────────────
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -74,33 +41,70 @@ const rl = readline.createInterface({
 
 async function ask(question: string, defaultVal?: string): Promise<string> {
   return new Promise((resolve) => {
-    const prompt = defaultVal
-      ? `  ${c.bold}${question}${c.reset} ${c.gray}(${defaultVal})${c.reset} › `
-      : `  ${c.bold}${question}${c.reset} › `;
-    rl.question(prompt, (ans) => {
+    const hint = defaultVal ? ` ${c.gray}(${defaultVal})${c.reset}` : '';
+    rl.question(`  ${c.bold}${question}${c.reset}${hint} › `, (ans) => {
       resolve(ans.trim() || defaultVal || '');
     });
   });
 }
 
+async function confirm(question: string, defaultYes = true): Promise<boolean> {
+  const hint = defaultYes ? 'Y/n' : 'y/N';
+  const ans = await ask(`${question} [${hint}]`);
+  if (!ans) return defaultYes;
+  return ans.toLowerCase().startsWith('y');
+}
+
 function section(title: string) {
   console.log();
   console.log(`  ${c.bold}${c.white}${title}${c.reset}`);
-  console.log(`  ${c.gray}${'─'.repeat(title.length)}${c.reset}`);
+  console.log(`  ${c.gray}${'─'.repeat(title.length + 2)}${c.reset}`);
+  console.log();
+}
+
+function info(msg: string) {
+  console.log(`  ${c.gray}${msg}${c.reset}`);
+}
+
+function ok(msg: string) {
+  console.log(`  ${c.green}✓${c.reset}  ${msg}`);
+}
+
+function warn(msg: string) {
+  console.log(`  ${c.yellow}⚠${c.reset}  ${msg}`);
+}
+
+function fail(msg: string) {
+  console.log(`  ${c.red}✗${c.reset}  ${msg}`);
+}
+
+function bullet(msg: string) {
+  console.log(`  ${c.cyan}•${c.reset}  ${msg}`);
+}
+
+function spinner(label: string): { stop: (status: 'ok' | 'fail' | 'warn', msg?: string) => void } {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let i = 0;
+  const iv = setInterval(() => {
+    process.stdout.write(`\r  ${c.cyan}${frames[i++ % frames.length]}${c.reset}  ${label}   `);
+  }, 80);
+  return {
+    stop(status, msg) {
+      clearInterval(iv);
+      const icon = status === 'ok' ? `${c.green}✓${c.reset}` : status === 'warn' ? `${c.yellow}⚠${c.reset}` : `${c.red}✗${c.reset}`;
+      process.stdout.write(`\r  ${icon}  ${msg ?? label}\n`);
+    },
+  };
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function parseEnvFile(filePath: string): Record<string, string> {
   const result: Record<string, string> = {};
   let content: string;
-  try {
-    content = fs.readFileSync(filePath, 'utf-8');
-  } catch {
-    return result;
-  }
+  try { content = fs.readFileSync(filePath, 'utf-8'); } catch { return result; }
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -108,10 +112,7 @@ function parseEnvFile(filePath: string): Record<string, string> {
     if (eqIdx === -1) continue;
     const key = trimmed.slice(0, eqIdx).trim();
     let value = trimmed.slice(eqIdx + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
     if (value) result[key] = value;
@@ -119,296 +120,412 @@ function parseEnvFile(filePath: string): Record<string, string> {
   return result;
 }
 
-async function validateBotToken(
-  token: string,
-): Promise<{ valid: boolean; username?: string; id?: number }> {
+async function validateBotToken(token: string): Promise<{ valid: boolean; username?: string }> {
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-    const data = (await res.json()) as {
-      ok: boolean;
-      result?: { username?: string; id?: number };
-    };
-    if (data.ok && data.result) {
-      return {
-        valid: true,
-        username: data.result.username,
-        id: data.result.id,
-      };
-    }
+    const data = (await res.json()) as { ok: boolean; result?: { username?: string } };
+    if (data.ok && data.result) return { valid: true, username: data.result.username };
     return { valid: false };
   } catch {
     return { valid: false };
   }
 }
 
-// ── Platform detection ───────────────────────────────────────────────────────
-const PLATFORM = process.platform; // 'darwin' | 'linux' | 'win32'
+const PLATFORM = process.platform;
 
-function platformLabel(): string {
-  if (PLATFORM === 'darwin') return 'macOS';
-  if (PLATFORM === 'linux') return 'Linux';
-  if (PLATFORM === 'win32') return 'Windows';
-  return process.platform;
-}
-
-// ── Main ────────────────────────────────────────────────────────────────────
-
+// ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
-  // ── Step 1: Banner ──
-  const banner = loadBanner();
-  console.log(`${c.cyan}${c.bold}${banner}${c.reset}`);
-  console.log(`  ${c.gray}Your Claude Code CLI. In your pocket.${c.reset}`);
-  console.log(`  ${c.gray}v1.0.0 · Setup Wizard · ${platformLabel()}${c.reset}`);
-  console.log();
-  const termWidth = process.stdout.columns || 80;
-  console.log(`  ${c.gray}${'─'.repeat(Math.min(termWidth - 4, 60))}${c.reset}`);
-  console.log();
-  console.log(`  Welcome. Let's get ClaudeClaw running in a few minutes.`);
-  console.log(`  Press Ctrl+C at any time to exit.`);
 
-  // ── Step 2: System Checks ──
-  section('System Checks');
+  // ── 1. Banner + intro ────────────────────────────────────────────────────
+  console.log(`${c.cyan}${c.bold}${loadBanner()}${c.reset}`);
+  console.log(`  ${c.bold}Welcome to ClaudeClaw.${c.reset}`);
+  console.log();
+  info('This wizard will get you set up in about 5 minutes.');
+  info('Press Ctrl+C at any time to exit. You can re-run this at any time with: npm run setup');
+  console.log();
 
-  // Node version
-  const s1 = spinner('Checking Node.js version...');
-  await sleep(400);
-  const nodeVersion = process.version;
-  const nodeMajor = parseInt(nodeVersion.slice(1).split('.')[0], 10);
+  // ── 2. What is ClaudeClaw ────────────────────────────────────────────────
+  section('What is ClaudeClaw?');
+
+  console.log(`  ClaudeClaw bridges your Claude Code CLI to Telegram.`);
+  console.log(`  You message your bot from your phone. ClaudeClaw runs the`);
+  console.log(`  ${c.bold}actual${c.reset} ${c.cyan}claude${c.reset} CLI on your computer — with all your skills,`);
+  console.log(`  tools, and context — and sends the result back to you.`);
+  console.log();
+  console.log(`  ${c.bold}It is not a chatbot wrapper.${c.reset} It runs real Claude Code.`);
+  console.log(`  Everything you can do in your terminal, you can do from your phone.`);
+  console.log();
+
+  bullet('Text, voice, photos, documents, and videos');
+  bullet('All your installed Claude Code skills auto-load');
+  bullet('Persistent memory across messages');
+  bullet('Scheduled autonomous tasks (cron)');
+  bullet('Optional WhatsApp bridge');
+  console.log();
+
+  const understood = await confirm('Ready to continue?');
+  if (!understood) {
+    console.log();
+    info('Come back when you\'re ready. Run npm run setup to start again.');
+    return;
+  }
+
+  // ── 3. System checks ─────────────────────────────────────────────────────
+  section('System checks');
+
+  // Node
+  const nodeMajor = parseInt(process.version.slice(1).split('.')[0], 10);
   if (nodeMajor >= 20) {
-    s1.stop('ok', `Node ${nodeVersion}`);
+    ok(`Node.js ${process.version}`);
   } else {
-    s1.stop('fail', `Node 20+ required, you have ${nodeVersion}`);
+    fail(`Node.js ${process.version} — version 20+ required`);
+    info('Download: https://nodejs.org');
     process.exit(1);
   }
 
   // Claude CLI
-  const s2 = spinner('Checking Claude CLI...');
-  await sleep(400);
   const claudeCmd = PLATFORM === 'win32' ? 'where claude' : 'which claude';
   try {
     execSync(claudeCmd, { stdio: 'pipe' });
-    let claudeVersion = 'installed';
-    try {
-      claudeVersion = execSync('claude --version', { stdio: 'pipe' })
-        .toString()
-        .trim();
-    } catch {
-      // version check failed but cli exists
-    }
-    s2.stop('ok', `Claude CLI ${c.gray}${claudeVersion}${c.reset}`);
+    let version = '';
+    try { version = execSync('claude --version', { stdio: 'pipe' }).toString().trim(); } catch { }
+    ok(`Claude CLI ${version}`);
   } catch {
-    s2.stop('fail', 'Claude CLI not found. Install: npm i -g @anthropic-ai/claude-code');
+    fail('Claude CLI not found');
+    console.log();
+    info('Install it:');
+    info('  npm install -g @anthropic-ai/claude-code');
+    info('  claude login');
+    console.log();
+    const proceed = await confirm('Install Claude Code now and re-run setup later?', false);
+    if (proceed) {
+      console.log();
+      info('Running: npm install -g @anthropic-ai/claude-code');
+      const result = spawnSync('npm', ['install', '-g', '@anthropic-ai/claude-code'], { stdio: 'inherit' });
+      if (result.status === 0) {
+        ok('Claude Code installed. Run claude login, then npm run setup again.');
+      } else {
+        fail('Install failed. Run manually: npm install -g @anthropic-ai/claude-code');
+      }
+    }
     process.exit(1);
   }
 
-  // .env file
-  const envPath = path.join(PROJECT_ROOT, '.env');
-  const s3 = spinner('Checking .env file...');
-  await sleep(300);
-  const envExists = fs.existsSync(envPath);
-  if (envExists) {
-    s3.stop('ok', '.env file found');
-  } else {
-    s3.stop('warn', 'Will create .env from template');
+  // Claude auth
+  try {
+    execSync('claude --version', { stdio: 'pipe' });
+    ok('Claude auth — logged in');
+  } catch {
+    warn('Could not verify Claude auth. If you\'re not logged in, run: claude login');
   }
 
-  // ── Step 3: Load or create .env ──
-  const env: Record<string, string> = envExists ? parseEnvFile(envPath) : {};
+  // Build check
+  const distExists = fs.existsSync(path.join(PROJECT_ROOT, 'dist', 'index.js'));
+  if (distExists) {
+    ok('Build output found (dist/)');
+  } else {
+    warn('Not built yet — building now...');
+    const build = spawnSync('npm', ['run', 'build'], { cwd: PROJECT_ROOT, stdio: 'inherit' });
+    if (build.status === 0) {
+      ok('Build complete');
+    } else {
+      fail('Build failed. Fix TypeScript errors, then re-run setup.');
+      process.exit(1);
+    }
+  }
 
-  // ── Step 4: Telegram Bot Token ──
+  // ── 4. What do you want to enable? ──────────────────────────────────────
+  section('Choose your features');
+
+  info('ClaudeClaw has several optional features. Tell us what you want.');
+  info('You can always add more later by editing .env and restarting.');
+  console.log();
+
+  const wantVoiceIn = await confirm('Voice input? (send voice notes → transcribed by Groq Whisper, free)', true);
+  const wantVoiceOut = wantVoiceIn
+    ? await confirm('Voice output? (Claude responds with audio via ElevenLabs — requires voice cloning)', false)
+    : false;
+  const wantVideo = await confirm('Video analysis? (send video clips → analyzed by Google Gemini)', false);
+  const wantWhatsApp = await confirm('WhatsApp bridge? (view and reply to WhatsApp from Telegram)', false);
+
+  // WhatsApp explanation if they said yes
+  if (wantWhatsApp) {
+    console.log();
+    console.log(`  ${c.bold}How the WhatsApp bridge works:${c.reset}`);
+    console.log();
+    info('ClaudeClaw uses whatsapp-web.js to connect to your existing WhatsApp');
+    info('account via the Linked Devices feature (same as WhatsApp Web).');
+    console.log();
+    info('A separate process (wa-daemon) runs in the background:');
+    bullet('Keeps a Puppeteer browser session alive');
+    bullet('Stores incoming messages to SQLite');
+    bullet('Exposes an HTTP API on port 4242');
+    console.log();
+    info('First run: a QR code prints to your terminal. Scan it from');
+    info('WhatsApp → Settings → Linked Devices. Session saves after that.');
+    console.log();
+    info('No API key needed — it uses your existing WhatsApp account.');
+    console.log();
+    warn('Note: WhatsApp may occasionally disconnect and require a re-scan.');
+    console.log();
+  }
+
+  // ── 5. Explore the ecosystem ─────────────────────────────────────────────
+  section('The Claw ecosystem');
+
+  info('ClaudeClaw is one of several "Claw" projects. You might want to');
+  info('look at others for inspiration or to use a different channel:');
+  console.log();
+  bullet(`${c.bold}NanoClaw${c.reset}  github.com/qwibitai/nanoclaw       — WhatsApp, isolated containers`);
+  bullet(`${c.bold}OpenClaw${c.reset}  github.com/openclaw/openclaw       — 10+ channels (Slack, Discord, iMessage...)`);
+  bullet(`${c.bold}TinyClaw${c.reset}  github.com/jlia0/tinyclaw          — ~400 lines shell, no Node`);
+  console.log();
+
+  const cloneInspiration = await confirm('Clone any of these repos to browse locally?', false);
+  if (cloneInspiration) {
+    console.log();
+    info('Which ones? (space-separated: nanoclaw openclaw tinyclaw)');
+    const picks = await ask('Repos to clone', 'skip');
+    if (picks !== 'skip' && picks.trim()) {
+      const map: Record<string, string> = {
+        nanoclaw: 'https://github.com/qwibitai/nanoclaw.git',
+        openclaw: 'https://github.com/openclaw/openclaw.git',
+        tinyclaw: 'https://github.com/jlia0/tinyclaw.git',
+      };
+      const cloneDir = path.join(PROJECT_ROOT, '..', 'claw-inspiration');
+      fs.mkdirSync(cloneDir, { recursive: true });
+      for (const name of picks.toLowerCase().split(/\s+/)) {
+        const url = map[name];
+        if (url) {
+          const s = spinner(`Cloning ${name}...`);
+          const r = spawnSync('git', ['clone', url, path.join(cloneDir, name)], { stdio: 'pipe' });
+          r.status === 0 ? s.stop('ok', `Cloned ${name} → ${cloneDir}/${name}`) : s.stop('warn', `Could not clone ${name}`);
+        }
+      }
+    }
+  }
+
+  // ── 6. CLAUDE.md personalization ─────────────────────────────────────────
+  section('Personalize your assistant (CLAUDE.md)');
+
+  info('CLAUDE.md is the personality and context file loaded into every session.');
+  info('It defines who your assistant is, what you do, and how it communicates.');
+  console.log();
+  info('At minimum, replace the [BRACKETED] placeholders:');
+  bullet('[YOUR ASSISTANT NAME]  — what you want to call the bot');
+  bullet('[YOUR NAME]            — your name (so it knows who it\'s talking to)');
+  bullet('[YOUR_OBSIDIAN_VAULT]  — path to your Obsidian vault, if you use one');
+  console.log();
+  info('The more context you add, the better it performs without explaining things');
+  info('in every message. Think of it as a system prompt that persists everywhere.');
+  console.log();
+
+  const openClaude = await confirm('Open CLAUDE.md now to edit it?', true);
+  if (openClaude) {
+    const claudePath = path.join(PROJECT_ROOT, 'CLAUDE.md');
+    const editor = process.env.EDITOR || (PLATFORM === 'win32' ? 'notepad' : 'nano');
+    try {
+      spawnSync(editor, [claudePath], { stdio: 'inherit' });
+    } catch {
+      warn(`Could not open ${editor}. Edit manually: ${claudePath}`);
+    }
+  }
+
+  // ── 7. Skills to install ─────────────────────────────────────────────────
+  section('Skills you might want');
+
+  info('ClaudeClaw auto-loads every skill in ~/.claude/skills/.');
+  info('Here are the most useful ones to install:');
+  console.log();
+
+  console.log(`  ${c.bold}Core skills (for everyone):${c.reset}`);
+  bullet('gmail           — read, triage, reply to email');
+  bullet('google-calendar — schedule meetings, check availability');
+  bullet('todo            — read tasks from Obsidian or text files');
+  bullet('agent-browser   — browse the web, fill forms, scrape data');
+  bullet('maestro         — run tasks in parallel with sub-agents');
+  console.log();
+
+  if (wantVideo) {
+    console.log(`  ${c.bold}Gemini skill (required for video analysis):${c.reset}`);
+    console.log();
+    info('ClaudeClaw\'s video analysis uses the gemini-api-dev skill from Google.');
+    info('It handles text, images, audio, video, function calling, and structured output.');
+    info('Install it from: https://github.com/google-gemini/gemini-skills');
+    console.log();
+    bullet('Skill docs:  github.com/google-gemini/gemini-skills/blob/main/skills/gemini-api-dev/SKILL.md');
+    bullet('Requires:    GOOGLE_API_KEY in .env (get free at aistudio.google.com)');
+    bullet('Install:     Copy the skill folder into ~/.claude/skills/gemini-api-dev/');
+    console.log();
+  }
+
+  info('Full skills catalog: https://github.com/anthropics/claude-code/tree/main/skills');
+  console.log();
+
+  // ── 8. API keys ───────────────────────────────────────────────────────────
   section('Telegram');
 
-  let botUsername = '';
-  let botId = 0;
+  const envPath = path.join(PROJECT_ROOT, '.env');
+  const env: Record<string, string> = fs.existsSync(envPath) ? parseEnvFile(envPath) : {};
 
+  let botUsername = '';
   if (env.TELEGRAM_BOT_TOKEN) {
-    const s4 = spinner('Validating bot token...');
-    await sleep(300);
-    const result = await validateBotToken(env.TELEGRAM_BOT_TOKEN);
-    if (result.valid) {
-      botUsername = result.username || '';
-      botId = result.id || 0;
-      s4.stop('ok', `Bot: @${botUsername} (ID: ${botId})`);
+    const s = spinner('Validating existing bot token...');
+    const r = await validateBotToken(env.TELEGRAM_BOT_TOKEN);
+    if (r.valid) {
+      botUsername = r.username || '';
+      s.stop('ok', `Bot: @${botUsername}`);
     } else {
-      s4.stop('fail', "Invalid token — let's get a new one");
+      s.stop('fail', 'Existing token invalid — enter a new one');
       delete env.TELEGRAM_BOT_TOKEN;
     }
   }
 
   if (!env.TELEGRAM_BOT_TOKEN) {
     console.log();
-    console.log(`  ${c.gray}1. Open Telegram and search for @BotFather${c.reset}`);
-    console.log(`  ${c.gray}2. Send /newbot${c.reset}`);
-    console.log(`  ${c.gray}3. Follow the prompts to name your bot${c.reset}`);
-    console.log(`  ${c.gray}4. Copy the token BotFather gives you${c.reset}`);
+    info('You need a Telegram bot token. Get one from @BotFather:');
+    bullet('Open Telegram → search @BotFather');
+    bullet('Send /newbot');
+    bullet('Follow the prompts, copy the token it gives you');
     console.log();
 
     let valid = false;
     while (!valid) {
       const token = await ask('Paste your bot token');
-      if (!token) {
-        console.log(`  ${c.red}Token is required.${c.reset}`);
-        continue;
-      }
-      const sv = spinner('Validating...');
-      const result = await validateBotToken(token);
-      if (result.valid) {
+      if (!token) { console.log(`  ${c.red}Required.${c.reset}`); continue; }
+      const s = spinner('Validating...');
+      const r = await validateBotToken(token);
+      if (r.valid) {
         env.TELEGRAM_BOT_TOKEN = token;
-        botUsername = result.username || '';
-        botId = result.id || 0;
-        sv.stop('ok', `Bot: @${botUsername} (ID: ${botId})`);
+        botUsername = r.username || '';
+        s.stop('ok', `Bot: @${botUsername}`);
         valid = true;
       } else {
-        sv.stop('fail', 'Invalid token. Try again.');
+        s.stop('fail', 'Invalid token. Try again.');
       }
     }
   }
 
-  // ── Step 5: Allowed Chat ID ──
   console.log();
   if (env.ALLOWED_CHAT_ID) {
-    console.log(`  ${c.green}✓${c.reset}  Locked to chat: ${env.ALLOWED_CHAT_ID}`);
+    ok(`Chat ID: ${env.ALLOWED_CHAT_ID}`);
   } else {
-    console.log(`  ${c.gray}To get your chat ID:${c.reset}`);
-    console.log(`  ${c.gray}1. Open Telegram and message your bot${c.reset}`);
-    console.log(`  ${c.gray}2. Send /chatid${c.reset}`);
-    console.log(`  ${c.gray}3. Copy the number it replies with${c.reset}`);
+    info('Your chat ID locks the bot so only you can use it.');
+    info('Start the bot first, send /chatid, paste the number here.');
+    info('Or skip — the bot will tell you your ID on the first message.');
     console.log();
-    console.log(`  ${c.gray}Or press Enter to skip (bot will prompt you on first message)${c.reset}`);
-    console.log();
+    const chatId = await ask('Your Telegram chat ID (or Enter to skip)', 'skip');
+    if (chatId !== 'skip' && chatId) env.ALLOWED_CHAT_ID = chatId;
+  }
 
-    const chatId = await ask('Your Telegram chat ID', 'skip');
-    if (chatId !== 'skip') {
-      env.ALLOWED_CHAT_ID = chatId;
+  // ── 9. Voice keys ─────────────────────────────────────────────────────────
+  if (wantVoiceIn || wantVoiceOut) {
+    section('Voice configuration');
+  }
+
+  if (wantVoiceIn) {
+    if (env.GROQ_API_KEY) {
+      ok('Groq STT already configured');
+    } else {
+      info('Groq provides free voice transcription (Whisper large-v3).');
+      info('Sign up free at: console.groq.com → API Keys');
+      console.log();
+      const key = await ask('Groq API key (Enter to skip)');
+      if (key) env.GROQ_API_KEY = key;
     }
   }
 
-  // ── Step 6: Claude Auth ──
-  section('Claude Authentication');
+  if (wantVoiceOut) {
+    if (env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID) {
+      ok('ElevenLabs TTS already configured');
+    } else {
+      console.log();
+      info('ElevenLabs generates spoken responses in your cloned voice.');
+      info('Sign up at elevenlabs.io → clone your voice under Voice Lab.');
+      console.log();
+      if (!env.ELEVENLABS_API_KEY) {
+        const key = await ask('ElevenLabs API key (Enter to skip)');
+        if (key) env.ELEVENLABS_API_KEY = key;
+      }
+      if (env.ELEVENLABS_API_KEY && !env.ELEVENLABS_VOICE_ID) {
+        info('Voice ID is the string ID in ElevenLabs, not the voice name.');
+        const vid = await ask('ElevenLabs Voice ID (Enter to skip)');
+        if (vid) env.ELEVENLABS_VOICE_ID = vid;
+      }
+    }
+  }
 
+  // ── 10. Video / Gemini ────────────────────────────────────────────────────
+  if (wantVideo) {
+    section('Video analysis — Google Gemini');
+
+    if (env.GOOGLE_API_KEY) {
+      ok('Google API key already configured');
+    } else {
+      info('Get a free Google API key at: aistudio.google.com → Get API key');
+      info('Then install the gemini-api-dev skill from:');
+      info('github.com/google-gemini/gemini-skills');
+      console.log();
+      const key = await ask('Google API key (Enter to skip)');
+      if (key) env.GOOGLE_API_KEY = key;
+    }
+  }
+
+  // ── 11. Optional Claude API key ───────────────────────────────────────────
+  section('Claude authentication');
+
+  info('By default, ClaudeClaw uses your existing claude login (Max plan).');
+  info('This is fine for personal use on your own machine.');
   console.log();
-  console.log(`  ${c.gray}ClaudeClaw uses your existing Claude Code auth by default.${c.reset}`);
-  console.log(`  ${c.gray}No extra key needed if you're already logged in via 'claude login'.${c.reset}`);
-  console.log();
-  console.log(`  ${c.gray}Optionally, set an API key to use pay-per-token billing instead of${c.reset}`);
-  console.log(`  ${c.gray}your subscription — recommended for always-on or server deployments.${c.reset}`);
+  info('Set an API key if you\'re deploying on a server, or want pay-per-token');
+  info('billing instead of using your subscription limits.');
   console.log();
 
   if (env.ANTHROPIC_API_KEY) {
-    console.log(`  ${c.green}✓${c.reset}  Anthropic API key configured`);
+    ok('API key already configured');
   } else {
-    const apiKey = await ask('Anthropic API key (get at console.anthropic.com, Enter to skip)');
-    if (apiKey) {
-      env.ANTHROPIC_API_KEY = apiKey;
-    }
+    const key = await ask('Anthropic API key — optional (Enter to skip)');
+    if (key) env.ANTHROPIC_API_KEY = key;
   }
 
-  // ── Step 7: Voice (Optional) ──
-  section('Voice (Optional)');
-
+  // ── 12. Write .env ────────────────────────────────────────────────────────
   console.log();
-  console.log(`  ${c.gray}Voice lets you send voice notes and hear responses back.${c.reset}`);
-  console.log(`  ${c.gray}STT: Groq Whisper (free tier)  ·  TTS: ElevenLabs${c.reset}`);
-  console.log();
+  const sw = spinner('Saving .env...');
+  await sleep(300);
 
-  // Groq
-  if (env.GROQ_API_KEY) {
-    console.log(`  ${c.green}✓${c.reset}  Groq STT configured`);
-  } else {
-    const groqKey = await ask('Groq API key (get free at console.groq.com, Enter to skip)');
-    if (groqKey) {
-      env.GROQ_API_KEY = groqKey;
-    }
-  }
-
-  // ElevenLabs
-  if (env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID) {
-    console.log(`  ${c.green}✓${c.reset}  ElevenLabs TTS configured`);
-  } else {
-    if (!env.ELEVENLABS_API_KEY) {
-      const elKey = await ask('ElevenLabs API key (get at elevenlabs.io, Enter to skip)');
-      if (elKey) {
-        env.ELEVENLABS_API_KEY = elKey;
-      }
-    }
-    if (env.ELEVENLABS_API_KEY && !env.ELEVENLABS_VOICE_ID) {
-      const voiceId = await ask('ElevenLabs Voice ID (Enter to skip)');
-      if (voiceId) {
-        env.ELEVENLABS_VOICE_ID = voiceId;
-      }
-    }
-  }
-
-  // ── Step 8: Optional integrations ──
-  section('Optional Integrations');
-
-  console.log();
-  console.log(`  ${c.gray}Add API keys for any integrations you want to use.${c.reset}`);
-  console.log();
-
-  // Google / Gemini (for video analysis via gemini-api-dev skill)
-  if (env.GOOGLE_API_KEY) {
-    console.log(`  ${c.green}✓${c.reset}  Google / Gemini key configured`);
-  } else {
-    const googleKey = await ask('Google API key for Gemini video analysis (get at aistudio.google.com, Enter to skip)');
-    if (googleKey) {
-      env.GOOGLE_API_KEY = googleKey;
-    }
-  }
-
-  // ── Step 9: Write .env ──
-  console.log();
-  const s9 = spinner('Saving configuration...');
-  await sleep(400);
-
-  const lines: string[] = [
-    '# ClaudeClaw Configuration',
-    '# Generated by setup wizard — edit freely',
+  const lines = [
+    '# ClaudeClaw — generated by setup wizard',
+    '# Edit freely. Re-run: npm run setup',
     '',
-    '# ── Required ──────────────────────────────────────────────────────',
+    '# ── Required ──────────────────────────────────────────────────',
     `TELEGRAM_BOT_TOKEN=${env.TELEGRAM_BOT_TOKEN || ''}`,
     `ALLOWED_CHAT_ID=${env.ALLOWED_CHAT_ID || ''}`,
     '',
-    '# ── Claude Auth (optional — uses existing claude login by default) ─',
+    '# ── Claude auth (optional — uses claude login by default) ─────',
     `ANTHROPIC_API_KEY=${env.ANTHROPIC_API_KEY || ''}`,
     '',
-    '# ── Voice ─────────────────────────────────────────────────────────',
+    '# ── Voice ─────────────────────────────────────────────────────',
     `GROQ_API_KEY=${env.GROQ_API_KEY || ''}`,
     `ELEVENLABS_API_KEY=${env.ELEVENLABS_API_KEY || ''}`,
     `ELEVENLABS_VOICE_ID=${env.ELEVENLABS_VOICE_ID || ''}`,
     '',
-    '# ── Integrations ──────────────────────────────────────────────────',
+    '# ── Integrations ──────────────────────────────────────────────',
     `GOOGLE_API_KEY=${env.GOOGLE_API_KEY || ''}`,
   ];
 
-  // Preserve any other keys already in the file that we didn't touch
-  for (const [key, val] of Object.entries(env)) {
-    const known = new Set([
-      'TELEGRAM_BOT_TOKEN', 'ALLOWED_CHAT_ID', 'ANTHROPIC_API_KEY',
-      'GROQ_API_KEY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
-      'GOOGLE_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'WHATSAPP_ENABLED',
-    ]);
-    if (!known.has(key) && val) {
-      lines.push(`${key}=${val}`);
-    }
+  // Preserve unknown keys
+  const known = new Set(['TELEGRAM_BOT_TOKEN','ALLOWED_CHAT_ID','ANTHROPIC_API_KEY','GROQ_API_KEY','ELEVENLABS_API_KEY','ELEVENLABS_VOICE_ID','GOOGLE_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','WHATSAPP_ENABLED']);
+  for (const [k, v] of Object.entries(env)) {
+    if (!known.has(k) && v) lines.push(`${k}=${v}`);
   }
 
   fs.writeFileSync(envPath, lines.join('\n') + '\n', 'utf-8');
 
-  // Verify write
   const written = parseEnvFile(envPath);
-  const missing: string[] = [];
-  if (env.TELEGRAM_BOT_TOKEN && !written.TELEGRAM_BOT_TOKEN) missing.push('TELEGRAM_BOT_TOKEN');
-  if (env.ALLOWED_CHAT_ID && !written.ALLOWED_CHAT_ID) missing.push('ALLOWED_CHAT_ID');
+  const keyCount = Object.values(written).filter(Boolean).length;
+  sw.stop('ok', `.env saved (${keyCount} key${keyCount !== 1 ? 's' : ''} configured)`);
 
-  if (missing.length > 0) {
-    s9.stop('warn', `Config saved but these keys were not written: ${missing.join(', ')}`);
-  } else {
-    const keyCount = Object.values(written).filter(Boolean).length;
-    s9.stop('ok', `Configuration saved to .env (${keyCount} key${keyCount !== 1 ? 's' : ''})`);
-  }
-
-  // ── Step 10: Auto-start ──
+  // ── 13. Auto-start service ───────────────────────────────────────────────
   if (PLATFORM === 'darwin') {
     await setupMacOS();
   } else if (PLATFORM === 'linux') {
@@ -417,176 +534,135 @@ async function main() {
     setupWindows();
   } else {
     section('Auto-start');
+    info('Unknown platform. Start manually: npm start');
+    info('Or use PM2: pm2 start dist/index.js --name claudeclaw && pm2 save');
+  }
+
+  // ── 14. WhatsApp daemon reminder ─────────────────────────────────────────
+  if (wantWhatsApp) {
+    section('WhatsApp — next steps');
+    info('To start the WhatsApp daemon:');
     console.log();
-    console.log(`  ${c.gray}Platform not detected. Start manually: npm start${c.reset}`);
-    console.log(`  ${c.gray}Or use a process manager like PM2: pm2 start dist/index.js --name claudeclaw${c.reset}`);
+    console.log(`  ${c.cyan}npx tsx scripts/wa-daemon.ts${c.reset}`);
+    console.log();
+    info('A QR code will appear. Scan it from:');
+    info('  WhatsApp → Settings → Linked Devices → Link a Device');
+    console.log();
+    info('The session saves to store/waweb/ and persists across restarts.');
+    info('Then use /wa in Telegram to access your chats.');
   }
 
-  // ── Final summary ──
+  // ── 15. Summary ───────────────────────────────────────────────────────────
   console.log();
-  console.log(`  ${c.cyan}╔══════════════════════════════════════════╗${c.reset}`);
-  console.log(`  ${c.cyan}║${c.reset}${c.bold}           ClaudeClaw is ready!           ${c.reset}${c.cyan}║${c.reset}`);
-  console.log(`  ${c.cyan}╚══════════════════════════════════════════╝${c.reset}`);
-  console.log();
-
-  console.log(`  ${c.green}✓${c.reset}  Bot token configured${botUsername ? ` (@${botUsername})` : ''}`);
-
-  if (env.ALLOWED_CHAT_ID) {
-    console.log(`  ${c.green}✓${c.reset}  Chat ID locked to: ${env.ALLOWED_CHAT_ID}`);
-  } else {
-    console.log(`  ${c.yellow}⚠${c.reset}  Chat ID: not set (bot will prompt on first message)`);
-  }
-
-  if (env.ANTHROPIC_API_KEY) {
-    console.log(`  ${c.green}✓${c.reset}  Claude: API key (pay-per-token)`);
-  } else {
-    console.log(`  ${c.gray}-${c.reset}  Claude: using existing 'claude login' auth`);
-  }
-
-  if (env.GROQ_API_KEY) {
-    console.log(`  ${c.green}✓${c.reset}  Voice STT: Groq Whisper`);
-  } else {
-    console.log(`  ${c.gray}-${c.reset}  Voice STT: not configured`);
-  }
-
-  if (env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID) {
-    console.log(`  ${c.green}✓${c.reset}  Voice TTS: ElevenLabs`);
-  } else {
-    console.log(`  ${c.gray}-${c.reset}  Voice TTS: not configured`);
-  }
-
-  if (env.GOOGLE_API_KEY) {
-    console.log(`  ${c.green}✓${c.reset}  Gemini: configured (video analysis)`);
-  } else {
-    console.log(`  ${c.gray}-${c.reset}  Gemini: not configured`);
-  }
-
-  console.log();
-  console.log(`  ${c.bold}Telegram commands:${c.reset}`);
-  console.log(`    /voice    toggle voice responses`);
-  console.log(`    /memory   see stored memories`);
-  console.log(`    /forget   clear session`);
-  console.log(`    /newchat  fresh start`);
-  console.log(`    /wa       WhatsApp interface`);
+  console.log(`  ${c.cyan}╔════════════════════════════════════════════╗${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}${c.bold}           ClaudeClaw is ready!             ${c.reset}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}╚════════════════════════════════════════════╝${c.reset}`);
   console.log();
 
+  ok(`Bot: @${botUsername || '(configure TELEGRAM_BOT_TOKEN)'}`);
+  env.ALLOWED_CHAT_ID ? ok(`Chat ID: ${env.ALLOWED_CHAT_ID}`) : warn('Chat ID: not set (bot will tell you on first message)');
+  env.ANTHROPIC_API_KEY ? ok('Claude: API key (pay-per-token)') : ok('Claude: Max plan subscription');
+  wantVoiceIn && env.GROQ_API_KEY ? ok('Voice input: Groq Whisper ✓') : wantVoiceIn ? warn('Voice input: GROQ_API_KEY not set') : info('Voice input: not enabled');
+  wantVoiceOut && env.ELEVENLABS_API_KEY ? ok('Voice output: ElevenLabs ✓') : wantVoiceOut ? warn('Voice output: ElevenLabs keys not set') : info('Voice output: not enabled');
+  wantVideo && env.GOOGLE_API_KEY ? ok('Video analysis: Gemini ✓') : wantVideo ? warn('Video analysis: GOOGLE_API_KEY not set') : info('Video analysis: not enabled');
+  wantWhatsApp ? ok('WhatsApp: run npx tsx scripts/wa-daemon.ts to connect') : info('WhatsApp: not enabled');
+
+  console.log();
+  console.log(`  ${c.bold}Start the bot:${c.reset}`);
+  console.log();
+  console.log(`  ${c.cyan}npm start${c.reset}                    # production (compiled)`);
+  console.log(`  ${c.cyan}npm run dev${c.reset}                  # development (tsx, no build needed)`);
+  console.log();
+  console.log(`  ${c.bold}Check health:${c.reset}`);
+  console.log(`  ${c.cyan}npm run status${c.reset}`);
+  console.log();
   if (PLATFORM === 'darwin') {
-    console.log(`  ${c.gray}Logs:  tail -f /tmp/claudeclaw.log${c.reset}`);
+    info('Logs: tail -f /tmp/claudeclaw.log');
   } else if (PLATFORM === 'linux') {
-    console.log(`  ${c.gray}Logs:  journalctl -u claudeclaw -f${c.reset}`);
+    info('Logs: journalctl --user -u claudeclaw -f');
   }
-  console.log(`  ${c.gray}Start: npm start${c.reset}`);
+  console.log();
+  info('Edit CLAUDE.md any time to change personality, add context, or update skills.');
+  info('Re-run npm run setup to change API keys or service settings.');
   console.log();
 }
 
-// ── macOS: launchd ───────────────────────────────────────────────────────────
+// ── Platform: macOS ──────────────────────────────────────────────────────────
 async function setupMacOS() {
-  section('Auto-start (macOS launchd)');
+  section('Auto-start (macOS)');
 
-  const plistDest = path.join(
-    os.homedir(),
-    'Library', 'LaunchAgents', 'com.claudeclaw.app.plist',
-  );
-  const plistInstalled = fs.existsSync(plistDest);
+  const dest = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.claudeclaw.app.plist');
+  const installed = fs.existsSync(dest);
 
-  if (plistInstalled) {
-    console.log(`  ${c.green}✓${c.reset}  launchd service already installed`);
-    const reinstall = await ask('Reinstall?', 'N');
-    if (reinstall.toLowerCase() === 'y') {
-      installLaunchd(plistDest);
-    }
+  if (installed) {
+    ok('launchd service already installed');
+    const reinstall = await confirm('Reinstall / update paths?', false);
+    if (!reinstall) return;
   } else {
-    const install = await ask('Install as background service (starts on login)?', 'Y');
-    if (install.toLowerCase() !== 'n') {
-      installLaunchd(plistDest);
-    } else {
-      console.log(`  ${c.gray}Start manually: npm start${c.reset}`);
-    }
+    const install = await confirm('Install as background service (starts automatically on login)?');
+    if (!install) { info('Start manually: npm start'); return; }
   }
-}
 
-function installLaunchd(dest: string) {
   const s = spinner('Installing launchd service...');
   try {
-    const nodePath = process.execPath;
-    const entryPoint = path.join(PROJECT_ROOT, 'dist', 'index.js');
-    const pathEnv = process.env.PATH ?? '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin';
-
-    const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>com.claudeclaw.app</string>
+  <key>Label</key><string>com.claudeclaw.app</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${nodePath}</string>
-    <string>${entryPoint}</string>
+    <string>${process.execPath}</string>
+    <string>${path.join(PROJECT_ROOT, 'dist', 'index.js')}</string>
   </array>
-  <key>WorkingDirectory</key>
-  <string>${PROJECT_ROOT}</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ThrottleInterval</key>
-  <integer>5</integer>
-  <key>StandardOutPath</key>
-  <string>/tmp/claudeclaw.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/claudeclaw.err</string>
+  <key>WorkingDirectory</key><string>${PROJECT_ROOT}</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>/tmp/claudeclaw.log</string>
+  <key>StandardErrorPath</key><string>/tmp/claudeclaw.err</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>NODE_ENV</key>
-    <string>production</string>
-    <key>PATH</key>
-    <string>${pathEnv}</string>
-    <key>HOME</key>
-    <string>${os.homedir()}</string>
+    <key>NODE_ENV</key><string>production</string>
+    <key>PATH</key><string>${process.env.PATH ?? '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin'}</string>
+    <key>HOME</key><string>${os.homedir()}</string>
   </dict>
 </dict>
 </plist>`;
-
-    const destDir = path.dirname(dest);
-    fs.mkdirSync(destDir, { recursive: true });
-    fs.writeFileSync(dest, plistContent, 'utf-8');
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, plist, 'utf-8');
     execSync(`launchctl load "${dest}"`, { stdio: 'pipe' });
-    s.stop('ok', 'Service installed — ClaudeClaw starts automatically on login');
+    s.stop('ok', 'Service installed — starts automatically on login');
+    info('Logs: tail -f /tmp/claudeclaw.log');
   } catch {
-    s.stop('warn', `Manual install: launchctl load "${dest}"`);
+    s.stop('warn', 'Could not install automatically');
+    info(`Manual install: launchctl load "${dest}"`);
   }
 }
 
-// ── Linux: systemd ───────────────────────────────────────────────────────────
+// ── Platform: Linux ──────────────────────────────────────────────────────────
 async function setupLinux() {
-  section('Auto-start (Linux systemd)');
+  section('Auto-start (Linux)');
 
-  console.log();
-  console.log(`  ${c.gray}This will create a systemd user service that starts on login.${c.reset}`);
-  console.log();
-
-  const install = await ask('Install as a systemd user service?', 'Y');
-  if (install.toLowerCase() === 'n') {
-    console.log(`  ${c.gray}Start manually: npm start${c.reset}`);
-    console.log(`  ${c.gray}Or use PM2: pm2 start dist/index.js --name claudeclaw && pm2 save${c.reset}`);
+  const install = await confirm('Install as a systemd user service?');
+  if (!install) {
+    info('Start manually: npm start');
+    info('Or: pm2 start dist/index.js --name claudeclaw && pm2 save');
     return;
   }
 
   const s = spinner('Installing systemd service...');
   try {
-    const nodePath = process.execPath;
-    const entryPoint = path.join(PROJECT_ROOT, 'dist', 'index.js');
     const serviceDir = path.join(os.homedir(), '.config', 'systemd', 'user');
     const servicePath = path.join(serviceDir, 'claudeclaw.service');
-
-    const serviceContent = `[Unit]
+    const service = `[Unit]
 Description=ClaudeClaw Telegram Bot
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=${PROJECT_ROOT}
-ExecStart=${nodePath} ${entryPoint}
+ExecStart=${process.execPath} ${path.join(PROJECT_ROOT, 'dist', 'index.js')}
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -597,44 +673,34 @@ Environment=HOME=${os.homedir()}
 [Install]
 WantedBy=default.target
 `;
-
     fs.mkdirSync(serviceDir, { recursive: true });
-    fs.writeFileSync(servicePath, serviceContent, 'utf-8');
+    fs.writeFileSync(servicePath, service, 'utf-8');
     execSync('systemctl --user daemon-reload', { stdio: 'pipe' });
     execSync('systemctl --user enable claudeclaw', { stdio: 'pipe' });
     execSync('systemctl --user start claudeclaw', { stdio: 'pipe' });
     s.stop('ok', `Service installed at ${servicePath}`);
-    console.log();
-    console.log(`  ${c.gray}Check status: systemctl --user status claudeclaw${c.reset}`);
-    console.log(`  ${c.gray}Logs: journalctl --user -u claudeclaw -f${c.reset}`);
-  } catch (err) {
-    s.stop('warn', 'Could not install systemd service automatically');
-    console.log();
-    console.log(`  ${c.gray}Install manually:${c.reset}`);
-    console.log(`  ${c.gray}  mkdir -p ~/.config/systemd/user${c.reset}`);
-    console.log(`  ${c.gray}  # create ~/.config/systemd/user/claudeclaw.service (see README)${c.reset}`);
-    console.log(`  ${c.gray}  systemctl --user daemon-reload${c.reset}`);
-    console.log(`  ${c.gray}  systemctl --user enable --now claudeclaw${c.reset}`);
+    info('Logs: journalctl --user -u claudeclaw -f');
+  } catch {
+    s.stop('warn', 'Could not install automatically');
+    info('See README.md for manual systemd setup instructions.');
   }
 }
 
-// ── Windows ───────────────────────────────────────────────────────────────────
+// ── Platform: Windows ────────────────────────────────────────────────────────
 function setupWindows() {
   section('Auto-start (Windows)');
 
+  warn('Windows detected.');
   console.log();
-  console.log(`  ${c.yellow}Windows detected.${c.reset} ClaudeClaw runs best under WSL2 or with PM2.`);
+  info('Option A — WSL2 (recommended):');
+  info('  Install WSL2, clone ClaudeClaw inside the WSL2 filesystem,');
+  info('  and re-run setup. Keep ~/.claude/ inside WSL2, not the Windows mount.');
   console.log();
-  console.log(`  ${c.bold}Option A: PM2 (recommended for native Windows)${c.reset}`);
-  console.log(`  ${c.gray}npm install -g pm2${c.reset}`);
-  console.log(`  ${c.gray}pm2 start dist/index.js --name claudeclaw${c.reset}`);
-  console.log(`  ${c.gray}pm2 save${c.reset}`);
-  console.log(`  ${c.gray}pm2 startup   # follow the instructions it prints${c.reset}`);
-  console.log();
-  console.log(`  ${c.bold}Option B: WSL2 (runs as a Linux systemd service)${c.reset}`);
-  console.log(`  ${c.gray}Install WSL2, clone this repo inside WSL2, re-run setup.${c.reset}`);
-  console.log(`  ${c.gray}Keep ~/.claude/ inside WSL2, not on the Windows mount.${c.reset}`);
-  console.log();
+  info('Option B — PM2 (native Windows):');
+  console.log(`  ${c.cyan}npm install -g pm2${c.reset}`);
+  console.log(`  ${c.cyan}pm2 start dist/index.js --name claudeclaw${c.reset}`);
+  console.log(`  ${c.cyan}pm2 save${c.reset}`);
+  console.log(`  ${c.cyan}pm2 startup${c.reset}  ${c.gray}# follow the instructions it prints${c.reset}`);
 }
 
 main()
@@ -642,6 +708,4 @@ main()
     console.error(`\n  ${c.red}Setup failed:${c.reset}`, err);
     process.exit(1);
   })
-  .finally(() => {
-    rl.close();
-  });
+  .finally(() => rl.close());

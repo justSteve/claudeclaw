@@ -221,11 +221,19 @@ Tweak these in `src/voice.ts` if the cloned voice sounds off. Most people find 0
 
 ### Google API Key — video analysis (optional)
 
-**What it does:** When you send a video to the bot, ClaudeClaw downloads it and instructs Claude to analyze it using the `gemini-api-dev` skill with this key. Without it, Claude receives the video file path but can't understand the content.
+**What it does:** When you send a video to the bot, ClaudeClaw downloads it and instructs Claude to analyze it using the `gemini-api-dev` skill. The skill handles text, images, audio, video, function calling, structured output, code execution, and embeddings — all using Gemini models.
 
 **How to get it:** [aistudio.google.com](https://aistudio.google.com) → "Get API key" — free tier available.
 
-**No alternatives** — Gemini is the only model that handles arbitrary video natively without additional setup.
+**Skill to install:** The `gemini-api-dev` skill is published by Google and lives here:
+
+- Skill docs: [github.com/google-gemini/gemini-skills/blob/main/skills/gemini-api-dev/SKILL.md](https://github.com/google-gemini/gemini-skills/blob/main/skills/gemini-api-dev/SKILL.md)
+- Full repo: [github.com/google-gemini/gemini-skills](https://github.com/google-gemini/gemini-skills)
+- Install: copy the `gemini-api-dev` folder into `~/.claude/skills/`
+
+The skill auto-detects your `GOOGLE_API_KEY` from the environment. ClaudeClaw passes it through automatically.
+
+**No alternatives** — Gemini is the only model that handles arbitrary video files natively without additional infrastructure.
 
 ---
 
@@ -522,31 +530,27 @@ Claude uses this automatically for heavy tasks (builds, restarts, long scrapes).
 - Claude Code installed and authenticated: `npm i -g @anthropic-ai/claude-code && claude login`
 - A Telegram bot token from [@BotFather](https://t.me/botfather)
 
-### Install
+### Install and run the setup wizard
 
 ```bash
 git clone https://github.com/earlyaidopters/claudeclaw.git
 cd claudeclaw
 npm install
-npm run build
-```
-
-### Configure
-
-```bash
-cp .env.example .env
-# Edit .env — add TELEGRAM_BOT_TOKEN at minimum
-```
-
-### Run the setup wizard
-
-```bash
 npm run setup
 ```
 
-Checks your environment, validates your bot token, walks through every API key with direct links, and installs a background service (launchd on macOS, systemd on Linux, PM2 instructions for Windows).
+The wizard walks you through everything interactively:
 
-### Or let Claude install it
+1. **What is ClaudeClaw** — quick explainer of how it works
+2. **System checks** — verifies Node.js, Claude CLI, and build
+3. **Feature selection** — choose what you want (voice, video, WhatsApp)
+4. **Ecosystem tour** — optionally clone NanoClaw/OpenClaw/TinyClaw for inspiration
+5. **CLAUDE.md** — opens your editor to personalize the assistant
+6. **Skills to install** — tells you exactly which skills you need and where to get them
+7. **API keys** — only asks for keys for the features you selected
+8. **Background service** — installs launchd (macOS), systemd (Linux), or PM2 (Windows)
+
+### Or let Claude set it up
 
 Clone the repo, `cd` into it, run `claude`, and paste:
 

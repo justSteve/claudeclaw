@@ -24,6 +24,8 @@ ClaudeClaw is not a chatbot wrapper. It spawns the actual `claude` CLI on your M
 
 ## Get started
 
+![ClaudeClaw setup flow](assets/setup-flow.jpeg)
+
 Follow these steps in order. The whole thing takes about 5 minutes.
 
 ---
@@ -173,6 +175,10 @@ Output looks like:
 
 ---
 
+## How it works
+
+![ClaudeClaw architecture](assets/architecture.jpeg)
+
 ## What's included
 
 ### Zero extra API keys needed
@@ -272,6 +278,8 @@ The skill reads `GOOGLE_API_KEY` from the environment automatically.
 
 ### Voice notes → text reply (default)
 
+![Voice pipeline](assets/voice-pipeline.jpeg)
+
 Sending a voice note transcribes it and executes it as a command. **The reply comes back as text by default** — not audio.
 
 To get a voice reply back from a specific voice note, say one of these anywhere in your message:
@@ -338,6 +346,8 @@ Any other `/command` passes through to Claude and routes to the matching skill.
 ---
 
 ## WhatsApp (optional)
+
+![WhatsApp bridge](assets/whatsapp-bridge.jpeg)
 
 No API key needed. Uses your existing WhatsApp account via Linked Devices.
 

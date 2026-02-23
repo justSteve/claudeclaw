@@ -20,14 +20,7 @@ At every preference question, remind them: "You can ask me anything about any of
 
 ## TLDR — What you're building
 
-Deliver this as your opening message. Start with this ASCII art exactly as shown, then continue in plain conversational text (no heavy markdown, no bullet walls):
-
-```
-  ┌─┐┬  ┌─┐┬ ┬┌┬┐┌─┐┌─┐┬  ┌─┐┬ ┬
-  │  │  ├─┤│ │ ││├┤ │  │  ├─┤│││
-  └─┘┴─┘┴ ┴└─┘─┴┘└─┘└─┘┴─┘┴ ┴┴ ┴
-  ──────── rebuild from scratch ────────
-```
+Deliver this as your opening message, in plain conversational text (no heavy markdown, no bullet walls):
 
 ---
 

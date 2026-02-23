@@ -360,22 +360,98 @@ Messages you send via the bot go into a `wa_outbox` SQLite table. The daemon's o
 
 ## Memory
 
-Three layers of context are always active:
+ClaudeClaw has three layers of context working simultaneously, all automatic, nothing to configure.
 
-**Session resumption** — Claude Code sessions persist via a stored session ID. Claude carries full tool use history and reasoning across messages without re-sending anything.
+### Layer 1 — Session resumption
 
-**SQLite + FTS5 memory** — Each turn is saved with a salience score:
-- **Semantic** (slow decay): messages with `my`, `I am`, `I prefer`, `remember`, `always`, `never`
-- **Episodic** (faster decay): other meaningful messages over 20 characters
+Every time you send a message, Claude Code resumes the same session using a stored session ID. This means Claude carries your full conversation history — tool use, reasoning, prior decisions — across messages without you re-sending anything. It's the same as if you never left the terminal.
 
-Salience starts at 1.0, increases when a memory is accessed, drops 2% daily, deleted below 0.1.
+Use `/newchat` to start a completely fresh session when you want a clean slate.
 
-**Context injection** — Before each message, FTS5 keyword search (top 3) + 5 most recent memories are prepended as a `[Memory context]` block.
+### Layer 2 — SQLite memory with FTS5 search
+
+Every meaningful message is saved to SQLite with a salience score and automatically recalled on relevant future messages. This works across `/newchat` resets — it's persistent, not session-bound.
+
+**How saving works:**
+
+| Message type | Sector | Decay rate |
+|-------------|--------|-----------|
+| Contains: `my`, `I am`, `I prefer`, `remember`, `always`, `never` | `semantic` | Slow — long-lived |
+| Any other message over 20 chars (not a `/command`) | `episodic` | Faster |
+
+**How salience works:**
+- Every memory starts at `1.0`
+- Each time a memory is retrieved and used: `+0.1` (capped at `5.0`)
+- Every day, all memories older than 24 hours: `× 0.98` (2% decay)
+- When salience drops below `0.1`: automatically deleted
+
+Things you mention often survive longer. Things you only said once fade away.
+
+### Layer 3 — Context injection
+
+Before every message you send, two searches run in parallel:
+1. **FTS5 keyword search** — matches your message text against all stored memories, returns top 3
+2. **Recency fallback** — the 5 most recently accessed memories
+
+The results are deduplicated and prepended to your message as a block Claude sees:
 
 ```
-/memory    see what's stored
-/forget    clear session
+[Memory context]
+- you prefer short bullet replies over long paragraphs (semantic)
+- working on the YouTube channel rebrand this week (episodic)
+- always send Telegram updates for heavy tasks (semantic)
+[End memory context]
 ```
+
+Claude uses this to answer without you re-explaining context every time.
+
+### Commands
+
+```
+/memory    show the most recent memories stored for this chat
+/forget    clear the current session (memories keep decaying naturally)
+```
+
+### Changing how memory works
+
+Memory behavior is controlled by two files you can edit:
+
+**`src/memory.ts`** — controls what gets saved and when:
+```typescript
+const SEMANTIC_SIGNALS = /\b(my|i am|i'm|i prefer|remember|always|never)\b/i;
+```
+Add words to this regex to make more things save as long-lived semantic memories.
+
+**`src/db.ts`** — controls decay constants:
+```typescript
+db.prepare('UPDATE memories SET salience = salience * 0.98 WHERE ...')  // decay rate
+db.prepare('DELETE FROM memories WHERE salience < 0.1')                 // deletion threshold
+```
+
+**Prompts you can send Claude to manage memory:**
+
+```
+"Remember that I always want responses in bullet points"
+→ Saved as semantic memory (high salience, slow decay)
+
+"Remember my Obsidian vault is at ~/Documents/Notes"
+→ Saved as semantic memory
+
+"What do you remember about me?"
+→ Claude searches memories and summarizes
+
+"Forget everything we've talked about today"
+→ Tell Claude to run: DELETE FROM memories WHERE created_at > strftime('%s','now','-1 day')
+
+"Show me all my stored memories"
+→ Claude runs: SELECT content, sector, salience FROM memories ORDER BY salience DESC
+```
+
+You can also ask Claude to manually insert a high-salience memory about anything:
+```
+"Remember permanently that I run a YouTube channel about AI and my timezone is EST"
+```
+Claude will insert it directly into the memories table with high salience.
 
 ---
 
@@ -600,36 +676,55 @@ flowchart TD
 
 ```
 claudeclaw/
+│
+│  ← Files you'll actually touch
+├── CLAUDE.md             ← START HERE: your assistant's personality and context
+├── banner.txt            ← ASCII art shown on startup — edit or replace freely
+├── .env                  ← Your API keys (created by setup wizard, gitignored)
+│
+│  ← Configuration and setup
+├── .env.example          Template for .env — shows all available variables
+├── claudeclaw.plist      macOS LaunchAgent template (setup wizard uses this)
+├── package.json          npm scripts and dependencies
+├── tsconfig.json         TypeScript compiler config
+│
+│  ← Bot source code (src/)
 ├── src/
-│   ├── index.ts          Entrypoint — banner, PID lock, DB init, bot, scheduler
-│   ├── bot.ts            Telegram handling, WhatsApp state machine, formatting
-│   ├── agent.ts          Claude Agent SDK — spawns claude subprocess
-│   ├── db.ts             SQLite schema and all DB functions
-│   ├── memory.ts         2-layer memory: FTS5 + salience decay
-│   ├── scheduler.ts      Cron task runner (60s tick)
-│   ├── voice.ts          Groq STT + ElevenLabs TTS
-│   ├── media.ts          Telegram file downloads + 24h auto-cleanup
-│   ├── whatsapp.ts       whatsapp-web.js interface + outbox poller
-│   ├── config.ts         Env config (never pollutes process.env)
-│   ├── env.ts            Custom .env parser
-│   └── schedule-cli.ts   CLI for managing scheduled tasks
+│   ├── index.ts          Main entrypoint — starts everything
+│   ├── bot.ts            Handles all Telegram messages (text, voice, photo, etc.)
+│   ├── agent.ts          Runs Claude Code — the core integration
+│   ├── db.ts             SQLite database — all tables and queries
+│   ├── memory.ts         Memory saving, searching, and decay logic
+│   ├── scheduler.ts      Cron task runner — fires tasks every 60 seconds
+│   ├── voice.ts          Voice transcription (Groq) and synthesis (ElevenLabs)
+│   ├── media.ts          Downloads files from Telegram, cleans up after 24h
+│   ├── whatsapp.ts       WhatsApp client via whatsapp-web.js
+│   ├── config.ts         Reads .env safely (never pollutes process.env)
+│   ├── env.ts            Low-level .env file parser
+│   └── schedule-cli.ts   CLI tool for managing scheduled tasks
 │
+│  ← Scripts (scripts/)
 ├── scripts/
-│   ├── wa-daemon.ts      Standalone WhatsApp daemon (HTTP :4242, CDP :9222)
-│   ├── notify.sh         Send Telegram message from shell (reads .env)
-│   ├── setup.ts          Interactive setup wizard (macOS / Linux / Windows)
-│   └── status.ts         Health check — env, bot, DB, service
+│   ├── setup.ts          Interactive setup wizard — run with: npm run setup
+│   ├── status.ts         Health check — run with: npm run status
+│   ├── notify.sh         Sends a Telegram message from the shell (used by Claude)
+│   └── wa-daemon.ts      WhatsApp daemon — run separately for WhatsApp bridge
 │
-├── banner.txt            Startup ASCII art — replace freely
-├── CLAUDE.md             Assistant personality and context — make this yours
-├── claudeclaw.plist      macOS LaunchAgent template
-├── store/                Runtime — gitignored
-│   ├── claudeclaw.db     SQLite database (auto-created on first run)
-│   ├── claudeclaw.pid    PID lock file
-│   └── waweb/            WhatsApp session cache
+│  ← Runtime data (auto-created, gitignored)
+├── store/
+│   ├── claudeclaw.db     SQLite database — created automatically on first run
+│   ├── claudeclaw.pid    Tracks the running process to prevent duplicates
+│   └── waweb/            WhatsApp session — scan QR once, persists here
+│
 └── workspace/
-    └── uploads/          Downloaded Telegram media (auto-cleaned after 24h)
+    └── uploads/          Telegram media downloads — auto-deleted after 24 hours
 ```
+
+**The only files you need to edit to get started:**
+1. `CLAUDE.md` — fill in your name, what you do, your file paths, your skills
+2. `.env` — add your API keys (the setup wizard does this for you)
+
+Everything else runs without modification.
 
 ---
 

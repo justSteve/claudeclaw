@@ -376,6 +376,8 @@ Messages you send via the bot go into a `wa_outbox` SQLite table. The daemon's o
 
 ## Memory
 
+![ClaudeClaw memory system diagram](assets/memory-diagram.jpeg)
+
 ClaudeClaw has three layers of context working simultaneously, all automatic, nothing to configure.
 
 ### Layer 1 — Session resumption

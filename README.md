@@ -1,5 +1,21 @@
 # ClaudeClaw
 
+```
+ ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
+██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
+██║     ██║     ███████║██║   ██║██║  ██║█████╗
+██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝
+╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
+ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝╚══════╝
+
+ ██████╗██╗      █████╗ ██╗    ██╗
+██╔════╝██║     ██╔══██╗██║    ██║
+██║     ██║     ███████║██║ █╗ ██║
+██║     ██║     ██╔══██║██║███╗██║
+╚██████╗███████╗██║  ██║╚███╔███╔╝
+ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+```
+
 > Your Claude Code CLI, delivered to your phone via Telegram.
 
 ClaudeClaw is not a chatbot wrapper. It spawns the actual `claude` CLI on your Mac or Linux machine and pipes the result back to your Telegram chat. Everything that works in your terminal — your skills, your tools, your context — works from your phone.

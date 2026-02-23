@@ -1,3 +1,10 @@
+```
+  ┌─┐┬  ┌─┐┬ ┬┌┬┐┌─┐┌─┐┬  ┌─┐┬ ┬
+  │  │  ├─┤│ │ ││├┤ │  │  ├─┤│││
+  └─┘┴─┘┴ ┴└─┘─┴┘└─┘└─┘┴─┘┴ ┴┴ ┴
+  ──────── rebuild from scratch ────────
+```
+
 # ClaudeClaw — Rebuild Mega Prompt
 
 Paste everything below this line into a fresh Claude Code session in an empty directory.

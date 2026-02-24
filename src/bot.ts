@@ -30,6 +30,14 @@ type WaState = WaStateList | WaStateChat;
 const waState = new Map<string, WaState>();
 
 /**
+ * Escape a string for safe inclusion in Telegram HTML messages.
+ * Prevents injection of HTML tags from external content (e.g. WhatsApp messages).
+ */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
  * Convert Markdown to Telegram HTML.
  *
  * Telegram supports a limited HTML subset: <b>, <i>, <s>, <u>, <code>, <pre>, <a>.
@@ -246,6 +254,7 @@ export function createBot(): Bot {
 
   // /newchat — clear Claude session, start fresh
   bot.command('newchat', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
     clearSession(ctx.chat!.id.toString());
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');
@@ -253,6 +262,7 @@ export function createBot(): Bot {
 
   // /voice — toggle voice mode for this chat
   bot.command('voice', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
     const caps = voiceCapabilities();
     if (!caps.tts) {
       await ctx.reply('ElevenLabs not configured. Add ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID to .env');
@@ -270,18 +280,20 @@ export function createBot(): Bot {
 
   // /memory — show recent memories for this chat
   bot.command('memory', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
     const chatId = ctx.chat!.id.toString();
     const recent = getRecentMemories(chatId, 10);
     if (recent.length === 0) {
       await ctx.reply('No memories yet.');
       return;
     }
-    const lines = recent.map(m => `<b>[${m.sector}]</b> ${m.content}`).join('\n');
+    const lines = recent.map(m => `<b>[${m.sector}]</b> ${escapeHtml(m.content)}`).join('\n');
     await ctx.reply(`<b>Recent memories</b>\n\n${lines}`, { parse_mode: 'HTML' });
   });
 
   // /forget — clear session (memory decay handles the rest)
   bot.command('forget', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
     clearSession(ctx.chat!.id.toString());
     await ctx.reply('Session cleared. Memories will fade naturally over time.');
   });
@@ -305,8 +317,8 @@ export function createBot(): Bot {
 
       const lines = chats.map((c, i) => {
         const unread = c.unreadCount > 0 ? ` <b>(${c.unreadCount} unread)</b>` : '';
-        const preview = c.lastMessage ? `\n   <i>${c.lastMessage.slice(0, 60)}${c.lastMessage.length > 60 ? '…' : ''}</i>` : '';
-        return `${i + 1}. ${c.name}${unread}${preview}`;
+        const preview = c.lastMessage ? `\n   <i>${escapeHtml(c.lastMessage.slice(0, 60))}${c.lastMessage.length > 60 ? '…' : ''}</i>` : '';
+        return `${i + 1}. ${escapeHtml(c.name)}${unread}${preview}`;
       }).join('\n\n');
 
       await ctx.reply(
@@ -342,7 +354,7 @@ export function createBot(): Bot {
         const target = state.chats[idx];
         try {
           await sendWhatsAppMessage(target.id, replyText);
-          await ctx.reply(`✓ Sent to <b>${target.name}</b>`, { parse_mode: 'HTML' });
+          await ctx.reply(`✓ Sent to <b>${escapeHtml(target.name)}</b>`, { parse_mode: 'HTML' });
         } catch (err) {
           logger.error({ err }, 'WhatsApp quick reply failed');
           await ctx.reply('Failed to send. Check that WhatsApp is still connected.');
@@ -362,11 +374,11 @@ export function createBot(): Bot {
 
           const lines = messages.map((m) => {
             const time = new Date(m.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            return `<b>${m.fromMe ? 'You' : m.senderName}</b> <i>${time}</i>\n${m.body}`;
+            return `<b>${m.fromMe ? 'You' : escapeHtml(m.senderName)}</b> <i>${time}</i>\n${escapeHtml(m.body)}`;
           }).join('\n\n');
 
           await ctx.reply(
-            `💬 <b>${target.name}</b>\n\n${lines}\n\n<i>r &lt;text&gt; to reply • /wa to go back</i>`,
+            `💬 <b>${escapeHtml(target.name)}</b>\n\n${lines}\n\n<i>r &lt;text&gt; to reply • /wa to go back</i>`,
             { parse_mode: 'HTML' },
           );
         } catch (err) {
@@ -384,7 +396,7 @@ export function createBot(): Bot {
         const replyText = replyMatch[1].trim();
         try {
           await sendWhatsAppMessage(state.chatId, replyText);
-          await ctx.reply(`✓ Sent to <b>${state.chatName}</b>`, { parse_mode: 'HTML' });
+          await ctx.reply(`✓ Sent to <b>${escapeHtml(state.chatName)}</b>`, { parse_mode: 'HTML' });
         } catch (err) {
           logger.error({ err }, 'WhatsApp reply failed');
           await ctx.reply('Failed to send. Check that WhatsApp is still connected.');
@@ -570,8 +582,8 @@ export async function notifyWhatsAppIncoming(
 ): Promise<void> {
   if (!ALLOWED_CHAT_ID) return;
 
-  const origin = isGroup && groupName ? `${groupName}` : contactName;
-  const text = `📱 <b>${origin}</b> — new message\n<i>/wa to view &amp; reply</i>`;
+  const origin = isGroup && groupName ? groupName : contactName;
+  const text = `📱 <b>${escapeHtml(origin)}</b> — new message\n<i>/wa to view &amp; reply</i>`;
 
   try {
     await api.sendMessage(parseInt(ALLOWED_CHAT_ID), text, { parse_mode: 'HTML' });

@@ -634,6 +634,20 @@ For server or multi-user deployments, set `ANTHROPIC_API_KEY` to use pay-per-tok
 
 ---
 
+## Security notes
+
+ClaudeClaw is designed to run on your personal machine for your own use. A few things to be aware of:
+
+**`bypassPermissions` mode.** The bot runs Claude Code with `permissionMode: 'bypassPermissions'`. This is required because there's no terminal to approve tool-use prompts. It means Claude can execute any tool (shell commands, file reads, web requests) without confirmation. This is safe when the bot is locked to your chat ID on your own machine. Do not expose it to untrusted users.
+
+**WhatsApp daemon runs on localhost only.** The `wa-daemon` HTTP API (port 4242) and Chrome DevTools Protocol (port 9222) bind to `127.0.0.1`. They are not accessible from outside your machine, but any process running locally can reach them. If you run untrusted code on the same machine, be aware that it could interact with your WhatsApp session.
+
+**`notify.sh` is called by Claude.** The notification script sends Telegram messages via `curl`. Since Claude has full shell access, it can call this script with any content. This is by design (it's how progress updates work), but be aware that prompt injection via external content (web pages, files) could theoretically cause Claude to send unexpected messages.
+
+**Set `ALLOWED_CHAT_ID` immediately.** Until this is set, the bot responds to any Telegram user who messages it. The setup wizard helps you configure this, but if you start the bot manually before setting it, it's open to everyone who knows the bot username.
+
+---
+
 ## Troubleshooting
 
 **Bot doesn't respond**

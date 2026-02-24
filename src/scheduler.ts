@@ -15,7 +15,7 @@ let sender: Sender;
 
 /**
  * Initialise the scheduler. Call once after the Telegram bot is ready.
- * @param send  Function that sends a message to Mark's Telegram chat.
+ * @param send  Function that sends a message to the user's Telegram chat.
  */
 export function initScheduler(send: Sender): void {
   if (!ALLOWED_CHAT_ID) {

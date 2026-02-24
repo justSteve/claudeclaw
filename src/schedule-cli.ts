@@ -2,7 +2,7 @@
 /**
  * ClaudeClaw Schedule CLI
  *
- * Used by Claudette via the Bash tool to manage scheduled tasks.
+ * Used by your Claude assistant via the Bash tool to manage scheduled tasks.
  *
  * Usage:
  *   node dist/schedule-cli.js create "prompt text" "0 9 * * 1"

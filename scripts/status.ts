@@ -74,8 +74,9 @@ async function main() {
   }
 
   // Claude CLI
+  const claudeCmd = process.platform === 'win32' ? 'where claude' : 'which claude';
   try {
-    execSync('which claude', { stdio: 'pipe' });
+    execSync(claudeCmd, { stdio: 'pipe' });
     let claudeVersion = '';
     try {
       claudeVersion = execSync('claude --version', { stdio: 'pipe' })
@@ -137,37 +138,55 @@ async function main() {
   }
 
   // Service status
-  try {
-    const output = execSync('launchctl list com.claudeclaw.app', {
-      stdio: 'pipe',
-    })
-      .toString()
-      .trim();
-    // Parse PID from launchctl output — first line after header has PID
-    const pidMatch = output.match(/"PID"\s*=\s*(\d+)/);
-    if (pidMatch) {
-      ok(`Service: running (PID ${pidMatch[1]})`);
-    } else {
-      // launchctl list succeeded, so it's loaded but might not be running
-      const lines = output.split('\n');
-      // The simple format is: PID\tStatus\tLabel
-      // If it's a dict format, just say loaded
-      let pid = '';
-      for (const line of lines) {
-        const parts = line.split('\t');
-        if (parts.length >= 3 && parts[2] === 'com.claudeclaw.app') {
-          pid = parts[0].trim();
-          break;
+  if (process.platform === 'darwin') {
+    try {
+      const output = execSync('launchctl list com.claudeclaw.app', {
+        stdio: 'pipe',
+      })
+        .toString()
+        .trim();
+      const pidMatch = output.match(/"PID"\s*=\s*(\d+)/);
+      if (pidMatch) {
+        ok(`Service: running (PID ${pidMatch[1]})`);
+      } else {
+        const lines = output.split('\n');
+        let pid = '';
+        for (const line of lines) {
+          const parts = line.split('\t');
+          if (parts.length >= 3 && parts[2] === 'com.claudeclaw.app') {
+            pid = parts[0].trim();
+            break;
+          }
+        }
+        if (pid && pid !== '-') {
+          ok(`Service: running (PID ${pid})`);
+        } else {
+          warn('Service: loaded but not running');
         }
       }
-      if (pid && pid !== '-') {
-        ok(`Service: running (PID ${pid})`);
-      } else {
-        warn('Service: loaded but not running');
-      }
+    } catch {
+      warn('Service: not installed');
     }
-  } catch {
-    warn('Service: not installed');
+  } else if (process.platform === 'linux') {
+    try {
+      const output = execSync('systemctl --user is-active claudeclaw', {
+        stdio: 'pipe',
+      }).toString().trim();
+      if (output === 'active') {
+        ok('Service: running (systemd)');
+      } else {
+        warn(`Service: ${output}`);
+      }
+    } catch {
+      warn('Service: not installed (systemd)');
+    }
+  } else {
+    try {
+      execSync('pm2 describe claudeclaw', { stdio: 'pipe' });
+      ok('Service: running (PM2)');
+    } catch {
+      warn('Service: not detected (check PM2 or start manually)');
+    }
   }
 
   // Memory DB

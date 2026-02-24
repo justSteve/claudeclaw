@@ -1,11 +1,11 @@
 {
   "name": "claudeclaw",
   "version": "1.0.0",
-  "description": "Mark's personal Claude Code assistant via Telegram",
+  "description": "Your personal Claude Code assistant, delivered to your phone via Telegram",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "launchctl unload ~/Library/LaunchAgents/com.claudeclaw.plist 2>/dev/null; pkill -f 'node.*dist/index' 2>/dev/null; sleep 1; tsx src/index.ts",
+    "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

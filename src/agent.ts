@@ -37,7 +37,7 @@ async function* singleTurn(text: string): AsyncGenerator<{
  *
  * Auth: The SDK spawns the `claude` CLI subprocess which reads OAuth auth
  * from ~/.claude/ automatically (the same auth used in the terminal).
- * No explicit token needed if Mark is already logged in via `claude login`.
+ * No explicit token needed if you're already logged in via `claude login`.
  * Optionally override with CLAUDE_CODE_OAUTH_TOKEN in .env.
  *
  * @param message   The user's text (may include transcribed voice prefix)
@@ -87,7 +87,7 @@ export async function runAgent(
         // 'project' loads CLAUDE.md from cwd; 'user' loads ~/.claude/skills/ and user settings
         settingSources: ['project', 'user'],
 
-        // Skip all permission prompts — this is Mark's personal bot on his own Mac
+        // Skip all permission prompts — this is a trusted personal bot on your own machine
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
 

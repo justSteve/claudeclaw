@@ -28,8 +28,11 @@ function checkContextWarning(chatId: string, usage: UsageInfo): string | null {
     return '⚠️ Context window was auto-compacted this turn. Some earlier conversation may have been summarized. Consider /newchat + /respin if things feel off.';
   }
 
-  if (usage.cacheReadInputTokens > CONTEXT_WARN_THRESHOLD) {
-    const pct = Math.round((usage.cacheReadInputTokens / 200_000) * 100);
+  // Use the last single API call's cache read — this reflects actual context size.
+  // The cumulative cacheReadInputTokens overcounts on multi-step tool-use turns
+  // (each step re-reads the full cache, so 3 steps = 3x the real size).
+  if (usage.lastCallCacheRead > CONTEXT_WARN_THRESHOLD) {
+    const pct = Math.round((usage.lastCallCacheRead / 200_000) * 100);
     return `⚠️ Context window at ~${pct}%. Getting close to the limit. Consider /newchat + /respin soon to avoid a crash.`;
   }
 
@@ -298,7 +301,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     if (errMsg.includes('exited with code 1')) {
       const usage = lastUsage.get(chatIdStr);
       const hint = usage
-        ? `Last known context: ~${Math.round((usage.cacheReadInputTokens / 1000))}k tokens.`
+        ? `Last known context: ~${Math.round((usage.lastCallCacheRead / 1000))}k tokens.`
         : 'No usage data from previous turns.';
       await ctx.reply(
         `Context window likely exhausted. ${hint}\n\nUse /newchat to start fresh, then /respin to pull recent conversation back in.`,

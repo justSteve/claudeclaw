@@ -13,6 +13,12 @@ export interface UsageInfo {
   didCompact: boolean;
   /** Token count before compaction (if it happened) */
   preCompactTokens: number | null;
+  /**
+   * The cache_read_input_tokens from the LAST API call in the turn.
+   * Unlike the cumulative cacheReadInputTokens, this reflects the actual
+   * context window size (cumulative overcounts on multi-step tool-use turns).
+   */
+  lastCallCacheRead: number;
 }
 
 export interface AgentResult {
@@ -79,6 +85,7 @@ export async function runAgent(
   let usage: UsageInfo | null = null;
   let didCompact = false;
   let preCompactTokens: number | null = null;
+  let lastCallCacheRead = 0;
 
   // Refresh typing indicator on an interval while Claude works.
   // Telegram's "typing..." action expires after ~5s.
@@ -128,6 +135,17 @@ export async function runAgent(
         );
       }
 
+      // Track per-call cache reads from assistant message events.
+      // Each assistant message represents one API call; its usage reflects
+      // that single call's context size (not cumulative across the turn).
+      if (ev['type'] === 'assistant') {
+        const msgUsage = (ev['message'] as Record<string, unknown>)?.['usage'] as Record<string, number> | undefined;
+        const callCacheRead = msgUsage?.['cache_read_input_tokens'] ?? 0;
+        if (callCacheRead > 0) {
+          lastCallCacheRead = callCacheRead;
+        }
+      }
+
       if (ev['type'] === 'result') {
         resultText = (ev['result'] as string | null | undefined) ?? null;
 
@@ -141,11 +159,13 @@ export async function runAgent(
             totalCostUsd: (ev['total_cost_usd'] as number) ?? 0,
             didCompact,
             preCompactTokens,
+            lastCallCacheRead,
           };
           logger.info(
             {
               inputTokens: usage.inputTokens,
               cacheReadTokens: usage.cacheReadInputTokens,
+              lastCallCacheRead: usage.lastCallCacheRead,
               costUsd: usage.totalCostUsd,
               didCompact,
             },

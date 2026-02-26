@@ -81,6 +81,21 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_convo_log_chat ON conversation_log(chat_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS token_usage (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id         TEXT NOT NULL,
+      session_id      TEXT,
+      input_tokens    INTEGER NOT NULL DEFAULT 0,
+      output_tokens   INTEGER NOT NULL DEFAULT 0,
+      cache_read      INTEGER NOT NULL DEFAULT 0,
+      cost_usd        REAL NOT NULL DEFAULT 0,
+      did_compact     INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_token_usage_chat ON token_usage(chat_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS slack_messages (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       channel_id   TEXT NOT NULL,
@@ -459,4 +474,79 @@ export function getRecentSlackMessages(channelId: string, limit = 20): SlackMess
        ORDER BY created_at DESC LIMIT ?`,
     )
     .all(channelId, limit) as SlackMessageRow[];
+}
+
+// ── Token Usage ──────────────────────────────────────────────────────
+
+export function saveTokenUsage(
+  chatId: string,
+  sessionId: string | undefined,
+  inputTokens: number,
+  outputTokens: number,
+  cacheRead: number,
+  costUsd: number,
+  didCompact: boolean,
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `INSERT INTO token_usage (chat_id, session_id, input_tokens, output_tokens, cache_read, cost_usd, did_compact, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(chatId, sessionId ?? null, inputTokens, outputTokens, cacheRead, costUsd, didCompact ? 1 : 0, now);
+}
+
+export interface SessionTokenSummary {
+  turns: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  lastCacheRead: number;
+  totalCostUsd: number;
+  compactions: number;
+  firstTurnAt: number;
+  lastTurnAt: number;
+}
+
+export function getSessionTokenUsage(sessionId: string): SessionTokenSummary | null {
+  const row = db
+    .prepare(
+      `SELECT
+         COUNT(*)           as turns,
+         SUM(input_tokens)  as totalInputTokens,
+         SUM(output_tokens) as totalOutputTokens,
+         SUM(cost_usd)      as totalCostUsd,
+         SUM(did_compact)   as compactions,
+         MIN(created_at)    as firstTurnAt,
+         MAX(created_at)    as lastTurnAt
+       FROM token_usage WHERE session_id = ?`,
+    )
+    .get(sessionId) as {
+      turns: number;
+      totalInputTokens: number;
+      totalOutputTokens: number;
+      totalCostUsd: number;
+      compactions: number;
+      firstTurnAt: number;
+      lastTurnAt: number;
+    } | undefined;
+
+  if (!row || row.turns === 0) return null;
+
+  // Get the most recent turn's cache_read — that's the actual context window size
+  const lastRow = db
+    .prepare(
+      `SELECT cache_read FROM token_usage
+       WHERE session_id = ?
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(sessionId) as { cache_read: number } | undefined;
+
+  return {
+    turns: row.turns,
+    totalInputTokens: row.totalInputTokens,
+    totalOutputTokens: row.totalOutputTokens,
+    lastCacheRead: lastRow?.cache_read ?? 0,
+    totalCostUsd: row.totalCostUsd,
+    compactions: row.compactions,
+    firstTurnAt: row.firstTurnAt,
+    lastTurnAt: row.lastTurnAt,
+  };
 }

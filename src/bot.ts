@@ -7,7 +7,7 @@ import {
   TELEGRAM_BOT_TOKEN,
   TYPING_REFRESH_MS,
 } from './config.js';
-import { clearSession, getRecentConversation, getRecentMemories, getSession, setSession, lookupWaChatId, saveWaMessageMap } from './db.js';
+import { clearSession, getRecentConversation, getRecentMemories, getSession, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage } from './db.js';
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, saveConversationTurn } from './memory.js';
@@ -285,8 +285,19 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       }
     }
 
-    // Proactive context window warning
+    // Log token usage to SQLite and check for context warnings
     if (result.usage) {
+      const activeSessionId = result.newSessionId ?? sessionId;
+      saveTokenUsage(
+        chatIdStr,
+        activeSessionId,
+        result.usage.inputTokens,
+        result.usage.outputTokens,
+        result.usage.lastCallCacheRead,
+        result.usage.totalCostUsd,
+        result.usage.didCompact,
+      );
+
       const warning = checkContextWarning(chatIdStr, result.usage);
       if (warning) {
         await ctx.reply(warning);

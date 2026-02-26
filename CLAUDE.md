@@ -102,13 +102,25 @@ You maintain context between messages via Claude Code session resumption. You do
 
 ### `convolife`
 When [YOUR NAME] says "convolife", check the remaining context window and report back. Steps:
-1. Find the current session JSONL. The path is `~/.claude/projects/` followed by the project root path with slashes replaced by hyphens (e.g. `/Users/you/projects/claudeclaw` → `-Users-you-projects-claudeclaw`). Run: `ls ~/.claude/projects/ | grep claudeclaw` to find the exact folder.
-2. Get the latest cache_read_input_tokens value: `grep -o '"cache_read_input_tokens":[0-9]*' <file> | tail -1 | grep -o '[0-9]*'`
-3. Calculate: used = that number, limit = 200000, remaining = limit - used, percent_used = used/limit * 100
+1. Get the current session ID: `sqlite3 [PATH TO CLAUDECLAW]/store/claudeclaw.db "SELECT session_id FROM sessions LIMIT 1;"`
+2. Query the token_usage table for the running total:
+```bash
+sqlite3 [PATH TO CLAUDECLAW]/store/claudeclaw.db "
+  SELECT
+    COUNT(*)           as turns,
+    MAX(cache_read)    as context_tokens,
+    SUM(output_tokens) as total_output,
+    SUM(cost_usd)      as total_cost,
+    SUM(did_compact)   as compactions
+  FROM token_usage WHERE session_id = '<SESSION_ID>';
+"
+```
+3. The `context_tokens` value (MAX cache_read) is the current context window usage. Calculate: used = context_tokens, limit = 200000, remaining = limit - used, percent_used = used/limit * 100
 4. Report in this format:
 ```
-Context window: XX% used
-~XXk tokens remaining
+Context window: XX% used (~XXk / 200k)
+Turns this session: N
+Compactions: N
 ```
 Keep it short.
 

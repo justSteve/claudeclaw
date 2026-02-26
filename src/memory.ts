@@ -1,6 +1,8 @@
 import {
   decayMemories,
   getRecentMemories,
+  logConversationTurn,
+  pruneConversationLog,
   saveMemory,
   searchMemories,
   touchMemory,
@@ -54,13 +56,19 @@ export async function buildMemoryContext(
  *   always, never) as 'semantic' sector (long-lived).
  * - Save other meaningful messages as 'episodic' sector (short decay).
  * - Skip short or command-like messages.
+ * - Always log both user and assistant messages to conversation_log.
  */
 export function saveConversationTurn(
   chatId: string,
   userMessage: string,
-  _claudeResponse: string,
+  claudeResponse: string,
+  sessionId?: string,
 ): void {
-  // Skip short or command-like messages
+  // Always log full conversation to conversation_log (for /respin)
+  logConversationTurn(chatId, 'user', userMessage, sessionId);
+  logConversationTurn(chatId, 'assistant', claudeResponse, sessionId);
+
+  // Skip short or command-like messages for memory extraction
   if (userMessage.length <= 20 || userMessage.startsWith('/')) return;
 
   if (SEMANTIC_SIGNALS.test(userMessage)) {
@@ -72,7 +80,9 @@ export function saveConversationTurn(
 
 /**
  * Run the daily decay sweep. Call once on startup and every 24h.
+ * Also prunes old conversation_log entries to prevent unbounded growth.
  */
 export function runDecaySweep(): void {
   decayMemories();
+  pruneConversationLog(500);
 }

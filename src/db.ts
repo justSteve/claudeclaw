@@ -70,6 +70,17 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_wa_messages_chat ON wa_messages(chat_id, timestamp DESC);
 
+    CREATE TABLE IF NOT EXISTS conversation_log (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id     TEXT NOT NULL,
+      session_id  TEXT,
+      role        TEXT NOT NULL,
+      content     TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_convo_log_chat ON conversation_log(chat_id, created_at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       content=memories,
@@ -319,6 +330,69 @@ export function getPendingWaMessages(): WaOutboxItem[] {
 export function markWaMessageSent(id: number): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(`UPDATE wa_outbox SET sent_at = ? WHERE id = ?`).run(now, id);
+}
+
+// ── WhatsApp messages ────────────────────────────────────────────────
+
+// ── Conversation Log ──────────────────────────────────────────────────
+
+export interface ConversationTurn {
+  id: number;
+  chat_id: string;
+  session_id: string | null;
+  role: string;
+  content: string;
+  created_at: number;
+}
+
+export function logConversationTurn(
+  chatId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  sessionId?: string,
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `INSERT INTO conversation_log (chat_id, session_id, role, content, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(chatId, sessionId ?? null, role, content, now);
+}
+
+export function getRecentConversation(
+  chatId: string,
+  limit = 20,
+): ConversationTurn[] {
+  return db
+    .prepare(
+      `SELECT * FROM conversation_log WHERE chat_id = ?
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(chatId, limit) as ConversationTurn[];
+}
+
+/**
+ * Prune old conversation_log entries, keeping only the most recent N rows per chat.
+ * Called alongside memory decay to prevent unbounded disk growth.
+ */
+export function pruneConversationLog(keepPerChat = 500): void {
+  // Get distinct chat IDs
+  const chats = db
+    .prepare('SELECT DISTINCT chat_id FROM conversation_log')
+    .all() as Array<{ chat_id: string }>;
+
+  const deleteStmt = db.prepare(`
+    DELETE FROM conversation_log
+    WHERE chat_id = ? AND id NOT IN (
+      SELECT id FROM conversation_log
+      WHERE chat_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    )
+  `);
+
+  for (const chat of chats) {
+    deleteStmt.run(chat.chat_id, chat.chat_id, keepPerChat);
+  }
 }
 
 // ── WhatsApp messages ────────────────────────────────────────────────

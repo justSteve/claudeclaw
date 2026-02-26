@@ -6,6 +6,8 @@ vi.mock('./db.js', () => ({
   touchMemory: vi.fn(),
   saveMemory: vi.fn(),
   decayMemories: vi.fn(),
+  logConversationTurn: vi.fn(),
+  pruneConversationLog: vi.fn(),
 }));
 
 import {

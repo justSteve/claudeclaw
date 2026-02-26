@@ -10,6 +10,7 @@ const envConfig = readEnvFile([
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_VOICE_ID',
   'WHATSAPP_ENABLED',
+  'SLACK_USER_TOKEN',
 ]);
 
 export const TELEGRAM_BOT_TOKEN =
@@ -21,6 +22,9 @@ export const ALLOWED_CHAT_ID =
 
 export const WHATSAPP_ENABLED =
   (process.env.WHATSAPP_ENABLED || envConfig.WHATSAPP_ENABLED || '').toLowerCase() === 'true';
+
+export const SLACK_USER_TOKEN =
+  process.env.SLACK_USER_TOKEN || envConfig.SLACK_USER_TOKEN || '';
 
 // Voice — read via readEnvFile, not process.env
 export const GROQ_API_KEY = envConfig.GROQ_API_KEY ?? '';

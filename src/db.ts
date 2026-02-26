@@ -81,6 +81,19 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_convo_log_chat ON conversation_log(chat_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS slack_messages (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id   TEXT NOT NULL,
+      channel_name TEXT NOT NULL,
+      user_name    TEXT NOT NULL,
+      body         TEXT NOT NULL,
+      timestamp    TEXT NOT NULL,
+      is_from_me   INTEGER NOT NULL DEFAULT 0,
+      created_at   INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_slack_messages_channel ON slack_messages(channel_id, created_at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       content=memories,
@@ -409,4 +422,41 @@ export function saveWaMessage(
     `INSERT INTO wa_messages (chat_id, contact_name, body, timestamp, is_from_me, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(chatId, contactName, body, timestamp, isFromMe ? 1 : 0, now);
+}
+
+// ── Slack messages ────────────────────────────────────────────────
+
+export function saveSlackMessage(
+  channelId: string,
+  channelName: string,
+  userName: string,
+  body: string,
+  timestamp: string,
+  isFromMe: boolean,
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `INSERT INTO slack_messages (channel_id, channel_name, user_name, body, timestamp, is_from_me, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(channelId, channelName, userName, body, timestamp, isFromMe ? 1 : 0, now);
+}
+
+export interface SlackMessageRow {
+  id: number;
+  channel_id: string;
+  channel_name: string;
+  user_name: string;
+  body: string;
+  timestamp: string;
+  is_from_me: number;
+  created_at: number;
+}
+
+export function getRecentSlackMessages(channelId: string, limit = 20): SlackMessageRow[] {
+  return db
+    .prepare(
+      `SELECT * FROM slack_messages WHERE channel_id = ?
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(channelId, limit) as SlackMessageRow[];
 }

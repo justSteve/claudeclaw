@@ -336,12 +336,133 @@ Every skill in `~/.claude/skills/` loads on every session. Call them directly (`
 | `/start` | Confirm the bot is online |
 | `/chatid` | Get your Telegram chat ID |
 | `/newchat` | Start a fresh Claude Code session |
+| `/respin` | After `/newchat`, pull the last 20 conversation turns back as context |
 | `/voice` | Toggle voice response mode on/off |
 | `/memory` | Show recent memories for this chat |
 | `/forget` | Clear current session |
 | `/wa` | Open the WhatsApp interface |
+| `/slack` | Open the Slack interface |
 
 Any other `/command` passes through to Claude and routes to the matching skill.
+
+### /newchat + /respin workflow
+
+Context windows fill up over long conversations. When things start feeling off or Claude starts missing context:
+
+1. Send `/newchat` to start a completely fresh session
+2. Send `/respin` immediately after
+
+`/respin` pulls the last 20 conversation turns from the database and feeds them back into the new session as context. Claude sees what you discussed recently without carrying the full token weight of the old session. It's like a soft restart.
+
+The pulled-in turns are marked as historical context (not new messages), so Claude treats them as background rather than active conversation.
+
+### /slack interface
+
+Send `/slack` to enter Slack mode. It works like the WhatsApp interface:
+
+```
+/slack           list recent conversations (unread first)
+1                open conversation #1, show last 15 messages
+r <text>         reply to the open conversation
+r 2 <text>       quick-reply to conversation #2 without opening it
+```
+
+Type anything that isn't a number or `r <text>` to exit Slack mode and return to normal Claude.
+
+---
+
+## Slack (optional)
+
+Requires a Slack User OAuth Token. This connects to your workspace so ClaudeClaw can read and send messages on your behalf.
+
+### Step 1 — Create a Slack app
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps)
+2. Click the green **Create New App** button (top right)
+3. In the popup, choose **From scratch** (not "From an app manifest")
+4. Fill in:
+   - **App Name**: anything you want (e.g. `ClaudeClaw`)
+   - **Pick a workspace**: select the Slack workspace you want to connect
+5. Click **Create App**
+
+You'll land on the **Basic Information** page for your new app.
+
+### Step 2 — Add User Token Scopes
+
+This is the critical step. You need to add permissions so the app can read and send messages as you.
+
+1. In the **left sidebar**, click **OAuth & Permissions**
+2. Scroll down past "OAuth Tokens for Your Workspace" until you see the **Scopes** section
+3. You'll see two subsections: **Bot Token Scopes** and **User Token Scopes**
+4. **Ignore Bot Token Scopes entirely.** Click **Add an OAuth Scope** under **User Token Scopes**
+5. Add each of these scopes one at a time (click **Add an OAuth Scope**, type the name, select it):
+
+   | Scope | Description |
+   |-------|-------------|
+   | `channels:history` | View messages and other content in public channels |
+   | `channels:read` | View basic information about public channels in a workspace |
+   | `chat:write` | Send messages on a user's behalf |
+   | `groups:history` | View messages and other content in private channels |
+   | `groups:read` | View basic information about private channels |
+   | `im:history` | View messages and other content in direct messages |
+   | `im:read` | View basic information about direct messages |
+   | `mpim:history` | View messages and other content in group direct messages |
+   | `mpim:read` | View basic information about group direct messages |
+   | `search:read` | Search a workspace's content |
+   | `users:read` | View people in a workspace |
+
+   After adding all 11, your User Token Scopes section should show all of them listed.
+
+### Step 3 — Install the app to your workspace
+
+1. Scroll back up to the top of the **OAuth & Permissions** page
+2. Under **OAuth Tokens for Your Workspace**, click **Install to Workspace**
+3. Slack will show a permissions screen listing everything the app can do
+4. Click **Allow**
+5. You'll be redirected back to the OAuth & Permissions page
+6. You'll now see a **User OAuth Token** field with a token that starts with `xoxp-`
+7. Click **Copy** to copy the token
+
+### Step 4 — Add the token to ClaudeClaw
+
+1. Open your `.env` file in the ClaudeClaw project directory
+2. Add the token:
+   ```
+   SLACK_USER_TOKEN=xoxp-your-token-here
+   ```
+3. Restart ClaudeClaw
+
+### Step 5 — Verify it works
+
+Send `/slack` in your Telegram chat. You should see a numbered list of your recent Slack conversations with unread counts.
+
+If you get "Slack not connected", double-check:
+- The token starts with `xoxp-` (not `xoxb-` which is a bot token)
+- The `.env` file has no extra spaces around the `=` sign
+- You restarted ClaudeClaw after adding the token
+
+### Using Slack from Claude Code (skill)
+
+ClaudeClaw ships with a Slack CLI at `dist/slack-cli.js` and a matching skill in `skills/slack/`. To use Slack via natural language from any Claude Code session:
+
+```bash
+cp -r skills/slack ~/.claude/skills/slack
+```
+
+Then just say "check my slack" or "message Jane on slack saying hey" and Claude handles the rest.
+
+### Slack CLI reference
+
+```bash
+cd /path/to/claudeclaw
+
+node dist/slack-cli.js list              # List conversations with unread counts
+node dist/slack-cli.js list --limit 10   # Limit results
+node dist/slack-cli.js read <channel_id> # Read messages from a conversation
+node dist/slack-cli.js send <channel_id> "message"  # Send a message
+node dist/slack-cli.js send <channel_id> "reply" --thread-ts 1234.5678  # Thread reply
+node dist/slack-cli.js search "jane"     # Find conversations by name
+```
 
 ---
 
@@ -526,6 +647,8 @@ scheduled_tasks  -- Cron-scheduled autonomous tasks
 wa_message_map   -- Maps Telegram message IDs to WhatsApp chats
 wa_outbox        -- Queued outgoing WhatsApp messages
 wa_messages      -- Incoming WhatsApp message history
+slack_messages   -- Slack message history
+conversation_log -- Full conversation turns (used by /respin)
 ```
 
 Inspect it directly:
@@ -567,11 +690,29 @@ The startup banner is in `banner.txt` at the project root. Replace it with anyth
 
 ## Skills to install
 
-ClaudeClaw auto-loads every skill in `~/.claude/skills/`. These are the most useful:
+ClaudeClaw auto-loads every skill in `~/.claude/skills/`. Install a skill by copying its folder there.
 
-**Core (recommended for everyone):**
-- `gmail` — read, triage, send email
-- `google-calendar` — schedule meetings, check availability
+### Bundled skills
+
+ClaudeClaw ships with ready-to-use skills in the `skills/` directory. Copy any of these to activate them:
+
+```bash
+# Gmail — read, triage, reply, send, create filters
+cp -r skills/gmail ~/.claude/skills/gmail
+
+# Google Calendar — schedule meetings, check availability, send invites
+cp -r skills/google-calendar ~/.claude/skills/google-calendar
+
+# Slack — list conversations, read messages, send replies
+cp -r skills/slack ~/.claude/skills/slack
+```
+
+**Gmail + Calendar require Google OAuth credentials.** See `.env.example` for the variables and each skill's `SKILL.md` for one-time setup instructions (create a Google Cloud project, enable the API, download credentials, run auth once).
+
+**Slack requires a User OAuth Token.** See the [Slack setup section](#slack-optional) above for step-by-step instructions.
+
+### Other recommended skills
+
 - `todo` — read tasks from Obsidian or text files
 - `agent-browser` — browse the web, fill forms, scrape data
 - `maestro` — run multiple tasks in parallel with sub-agents
@@ -596,6 +737,10 @@ Browse more: [github.com/anthropics/claude-code](https://github.com/anthropics/c
 | `ELEVENLABS_API_KEY` | No | Voice output — [elevenlabs.io](https://elevenlabs.io) |
 | `ELEVENLABS_VOICE_ID` | No | Your ElevenLabs voice ID string |
 | `GOOGLE_API_KEY` | No | Gemini — [aistudio.google.com](https://aistudio.google.com) |
+| `SLACK_USER_TOKEN` | No | Slack User OAuth Token (starts with `xoxp-`) |
+| `GOOGLE_CREDS_PATH` | No | Path to Google OAuth credentials.json (default: `~/.config/gmail/credentials.json`) |
+| `GMAIL_TOKEN_PATH` | No | Path to Gmail OAuth token (default: `~/.config/gmail/token.json`) |
+| `GCAL_TOKEN_PATH` | No | Path to Calendar OAuth token (default: `~/.config/calendar/token.json`) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | No | Override which Claude account is used |
 
 ---
@@ -740,10 +885,18 @@ claudeclaw/
 │   ├── scheduler.ts      Cron task runner — fires tasks every 60 seconds
 │   ├── voice.ts          Voice transcription (Groq) and synthesis (ElevenLabs)
 │   ├── media.ts          Downloads files from Telegram, cleans up after 24h
-│   ├── whatsapp.ts       WhatsApp client via whatsapp-web.js
-│   ├── config.ts         Reads .env safely (never pollutes process.env)
-│   ├── env.ts            Low-level .env file parser
-│   └── schedule-cli.ts   CLI tool for managing scheduled tasks
+│   ├── slack.ts           Slack API client (conversations, messages, send)
+│   ├── slack-cli.ts       CLI wrapper for Slack (used by the slack skill)
+│   ├── whatsapp.ts        WhatsApp client via whatsapp-web.js
+│   ├── config.ts          Reads .env safely (never pollutes process.env)
+│   ├── env.ts             Low-level .env file parser
+│   └── schedule-cli.ts    CLI tool for managing scheduled tasks
+│
+│  ← Skills (copy to ~/.claude/skills/ to activate)
+├── skills/
+│   ├── gmail/SKILL.md     Gmail inbox management
+│   ├── google-calendar/   Calendar events, invites, availability
+│   └── slack/SKILL.md     Slack conversations and messages
 │
 │  ← Scripts (scripts/)
 ├── scripts/

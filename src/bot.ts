@@ -42,6 +42,7 @@ import {
   voiceCapabilities,
   UPLOADS_DIR,
 } from './voice.js';
+import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 
 // Per-chat voice mode toggle (in-memory, resets on restart)
@@ -53,12 +54,36 @@ interface WaStateChat { mode: 'chat'; chatId: string; chatName: string }
 type WaState = WaStateList | WaStateChat;
 const waState = new Map<string, WaState>();
 
+// Slack state per Telegram chat
+interface SlackStateList { mode: 'list'; convos: SlackConversation[] }
+interface SlackStateChat { mode: 'chat'; channelId: string; channelName: string }
+type SlackState = SlackStateList | SlackStateChat;
+const slackState = new Map<string, SlackState>();
+
 /**
  * Escape a string for safe inclusion in Telegram HTML messages.
  * Prevents injection of HTML tags from external content (e.g. WhatsApp messages).
  */
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Extract a selection number from natural language like "2", "open 2",
+ * "open convo number 2", "number 3", "show me 5", etc.
+ * Returns the number (1-indexed) or null if no match.
+ */
+function extractSelectionNumber(text: string): number | null {
+  const trimmed = text.trim();
+  // Bare number
+  if (/^\d+$/.test(trimmed)) return parseInt(trimmed);
+  // Natural language: "open 2", "open convo 2", "open number 2", "show 3", "select 1", etc.
+  const match = trimmed.match(/^(?:open|show|select|view|read|go to|check)(?:\s+(?:convo|conversation|chat|channel|number|num|#|no\.?))?\s*#?\s*(\d+)$/i);
+  if (match) return parseInt(match[1]);
+  // "number 2", "num 2", "#2"
+  const numMatch = trimmed.match(/^(?:number|num|no\.?|#)\s*(\d+)$/i);
+  if (numMatch) return parseInt(numMatch[1]);
+  return null;
 }
 
 /**
@@ -327,7 +352,7 @@ export function createBot(): Bot {
     // Reverse to chronological order and format
     turns.reverse();
     const lines = turns.map((t) => {
-      const role = t.role === 'user' ? 'Mark' : 'Assistant';
+      const role = t.role === 'user' ? 'User' : 'Assistant';
       // Truncate very long messages to keep context reasonable
       const content = t.content.length > 500 ? t.content.slice(0, 500) + '...' : t.content;
       return `[${role}]: ${content}`;
@@ -410,8 +435,44 @@ export function createBot(): Bot {
     }
   });
 
+  // /slack — pull recent Slack conversations on demand
+  bot.command('slack', async (ctx) => {
+    const chatIdStr = ctx.chat!.id.toString();
+    if (!isAuthorised(ctx.chat!.id)) return;
+
+    try {
+      await sendTyping(ctx.api, ctx.chat!.id);
+      const convos = await getSlackConversations(10);
+      if (convos.length === 0) {
+        await ctx.reply('No recent Slack conversations found.');
+        return;
+      }
+
+      slackState.set(chatIdStr, { mode: 'list', convos });
+      // Clear any WhatsApp state to avoid conflicts
+      waState.delete(chatIdStr);
+
+      const lines = convos.map((c, i) => {
+        const unread = c.unreadCount > 0 ? ` <b>(${c.unreadCount} unread)</b>` : '';
+        const icon = c.isIm ? '💬' : '#';
+        const preview = c.lastMessage
+          ? `\n   <i>${escapeHtml(c.lastMessage.slice(0, 60))}${c.lastMessage.length > 60 ? '…' : ''}</i>`
+          : '';
+        return `${i + 1}. ${icon} ${escapeHtml(c.name)}${unread}${preview}`;
+      }).join('\n\n');
+
+      await ctx.reply(
+        `💼 <b>Slack</b>\n\n${lines}\n\n<i>Send a number to open • r &lt;num&gt; &lt;text&gt; to reply</i>`,
+        { parse_mode: 'HTML' },
+      );
+    } catch (err) {
+      logger.error({ err }, '/slack command failed');
+      await ctx.reply('Slack not connected. Make sure SLACK_USER_TOKEN is set in .env.');
+    }
+  });
+
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
-  const OWN_COMMANDS = new Set(['/start', '/newchat', '/respin', '/voice', '/memory', '/forget', '/chatid', '/wa']);
+  const OWN_COMMANDS = new Set(['/start', '/newchat', '/respin', '/voice', '/memory', '/forget', '/chatid', '/wa', '/slack']);
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     const chatIdStr = ctx.chat!.id.toString();
@@ -442,9 +503,10 @@ export function createBot(): Bot {
       }
     }
 
-    // "<num>" — open a chat from the list
-    if (state?.mode === 'list' && /^[1-5]$/.test(text.trim())) {
-      const idx = parseInt(text.trim()) - 1;
+    // "<num>" or "open 2" etc — open a chat from the list
+    const waSelection = state?.mode === 'list' ? extractSelectionNumber(text) : null;
+    if (state?.mode === 'list' && waSelection !== null) {
+      const idx = waSelection - 1;
       if (idx >= 0 && idx < state.chats.length) {
         const target = state.chats[idx];
         try {
@@ -484,6 +546,73 @@ export function createBot(): Bot {
       }
     }
 
+    // ── Slack state machine ────────────────────────────────────────
+    const slkState = slackState.get(chatIdStr);
+
+    // "r <num> <text>" — quick reply from Slack list view
+    const slackQuickReply = text.match(/^r\s+(\d+)\s+(.+)/is);
+    if (slackQuickReply && slkState?.mode === 'list') {
+      const idx = parseInt(slackQuickReply[1]) - 1;
+      const replyText = slackQuickReply[2].trim();
+      if (idx >= 0 && idx < slkState.convos.length) {
+        const target = slkState.convos[idx];
+        try {
+          await sendSlackMessage(target.id, replyText, target.name);
+          await ctx.reply(`✓ Sent to <b>${escapeHtml(target.name)}</b> on Slack`, { parse_mode: 'HTML' });
+        } catch (err) {
+          logger.error({ err }, 'Slack quick reply failed');
+          await ctx.reply('Failed to send. Check that SLACK_USER_TOKEN is valid.');
+        }
+        return;
+      }
+    }
+
+    // "<num>" or "open 2" etc — open a Slack conversation from the list
+    const slackSelection = slkState?.mode === 'list' ? extractSelectionNumber(text) : null;
+    if (slkState?.mode === 'list' && slackSelection !== null) {
+      const idx = slackSelection - 1;
+      if (idx >= 0 && idx < slkState.convos.length) {
+        const target = slkState.convos[idx];
+        try {
+          await sendTyping(ctx.api, ctx.chat!.id);
+          const messages = await getSlackMessages(target.id, 15);
+          slackState.set(chatIdStr, { mode: 'chat', channelId: target.id, channelName: target.name });
+
+          const lines = messages.map((m) => {
+            const date = new Date(parseFloat(m.ts) * 1000);
+            const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return `<b>${m.fromMe ? 'You' : escapeHtml(m.userName)}</b> <i>${time}</i>\n${escapeHtml(m.text)}`;
+          }).join('\n\n');
+
+          const icon = target.isIm ? '💬' : '#';
+          await ctx.reply(
+            `${icon} <b>${escapeHtml(target.name)}</b>\n\n${lines}\n\n<i>r &lt;text&gt; to reply • /slack to go back</i>`,
+            { parse_mode: 'HTML' },
+          );
+        } catch (err) {
+          logger.error({ err }, 'Slack open conversation failed');
+          await ctx.reply('Could not open that conversation. Try /slack again.');
+        }
+        return;
+      }
+    }
+
+    // "r <text>" — reply to open Slack conversation
+    if (slkState?.mode === 'chat') {
+      const replyMatch = text.match(/^r\s+(.+)/is);
+      if (replyMatch) {
+        const replyText = replyMatch[1].trim();
+        try {
+          await sendSlackMessage(slkState.channelId, replyText, slkState.channelName);
+          await ctx.reply(`✓ Sent to <b>${escapeHtml(slkState.channelName)}</b> on Slack`, { parse_mode: 'HTML' });
+        } catch (err) {
+          logger.error({ err }, 'Slack reply failed');
+          await ctx.reply('Failed to send. Check that SLACK_USER_TOKEN is valid.');
+        }
+        return;
+      }
+    }
+
     // Legacy: Telegram-native reply to a forwarded WA message
     const replyToId = ctx.message.reply_to_message?.message_id;
     if (replyToId) {
@@ -500,8 +629,9 @@ export function createBot(): Bot {
       }
     }
 
-    // Clear WA state and pass through to Claude
+    // Clear WA/Slack state and pass through to Claude
     if (state) waState.delete(chatIdStr);
+    if (slkState) slackState.delete(chatIdStr);
     await handleMessage(ctx, text);
   });
 

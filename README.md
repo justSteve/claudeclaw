@@ -35,9 +35,23 @@ Follow these steps in order. The whole thing takes about 5 minutes.
 | Requirement | Notes |
 |-------------|-------|
 | **Node.js 20+** | Check: `node --version`. Download at [nodejs.org](https://nodejs.org) |
+| **Git** | Check: `git --version`. If you've never used git, also run the two commands below |
 | **Claude Code CLI** | Install: `npm i -g @anthropic-ai/claude-code` |
 | **Claude account** | Log in: `claude login` (free, Pro, or Max plan) |
 | **Telegram account** | Any existing account works |
+
+**First time using git?** Run these two commands first (use your own name and email):
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
+Without this, git operations will fail with a confusing error about missing identity.
+
+**macOS users:** After starting ClaudeClaw for the first time, your Mac may show "Node wants to access..." permission dialogs. You need to click Allow on each one or the bot will silently hang. Keep an eye on your Mac screen during the first run.
+
+**Which Claude plan works best?** ClaudeClaw runs the `claude` CLI, so any plan works (Free, Pro, Max). However, complex multi-step tasks (building skills, debugging code, multi-agent work) perform significantly better on **Opus**. If you're on the Free or Pro plan and Claude struggles with a task, the model matters. Sonnet is fast but often can't handle the kind of agentic work ClaudeClaw enables. Max ($100 or $200) with Opus is the recommended experience.
+
+**New to the terminal?** Download [Warp](https://www.warp.dev) — it's a modern terminal with AI built in. If you hit any OS-level issues during setup (permissions, missing tools, PATH problems), type `/agent` in Warp and describe what went wrong. It will walk you through fixing it. This alone will save you hours of Googling.
 
 That's it for hard requirements. Everything else (voice, video, WhatsApp) is optional and the setup wizard will ask about them.
 
@@ -172,6 +186,25 @@ Output looks like:
   ─────────────────
   All systems go.
 ```
+
+---
+
+## Updating ClaudeClaw
+
+When a new version is released, update in 4 commands:
+
+```bash
+cd claudeclaw          # go to your ClaudeClaw directory
+git pull               # pull the latest code
+npm install            # install any new dependencies
+npm run build          # recompile TypeScript
+```
+
+Then restart the bot (Ctrl+C and `npm start`, or restart the background service).
+
+**Do not** point Claude at the GitHub URL to read updates. Claude works with local files, so you need the repo cloned on your machine. `git pull` is how you stay current.
+
+**Upgrading from V1?** If you heavily customized V1, start fresh with V2 and copy over your `.env` and any CLAUDE.md customizations. If you kept V1 mostly stock, `git pull` will work.
 
 ---
 
@@ -800,6 +833,22 @@ ClaudeClaw is designed to run on your personal machine for your own use. A few t
 - Check logs: `tail -f /tmp/claudeclaw.log`
 - Run `npm run status` for a full health check
 - Verify Claude auth: `claude --version`
+- **macOS:** Check if your Mac is showing "Node wants to access..." permission dialogs. The bot hangs until you click Allow. This is easy to miss if your Mac screen is off or in the background.
+
+**Setup fails at bracket placeholders**
+- `CLAUDE.md` ships with `[BRACKETED]` placeholder values like `[YOUR NAME]` and `[YOUR ASSISTANT NAME]`
+- These **must** be replaced before the bot can work properly
+- The setup wizard opens `CLAUDE.md` in your editor for this, but if you skip it or your editor doesn't save, edit it manually: open `CLAUDE.md` in any text editor, find/replace all `[BRACKETED]` values with your actual info
+- You do **not** need to fill in every bracket. At minimum: `[YOUR ASSISTANT NAME]`, `[YOUR NAME]`, and `[PATH TO CLAUDECLAW]` (the full path to your claudeclaw directory)
+
+**Git errors during setup**
+- "Please tell me who you are" — run `git config --global user.name "Your Name"` and `git config --global user.email "you@email.com"`
+- Git needs these set once, globally, before it can do anything
+
+**Can't access the internet / "break out"**
+- ClaudeClaw runs the real Claude Code CLI, which has full internet access through its built-in tools (web search, web fetch, bash with curl, etc.)
+- If Claude says it can't access the internet, it's likely a skill or prompt issue, not a ClaudeClaw limitation
+- Make sure your Claude Code CLI works in the terminal first: open a terminal, run `claude`, and ask it to search the web
 
 **Voice notes return an error**
 - `GROQ_API_KEY` must be in `.env` and the bot restarted after adding it
@@ -822,6 +871,34 @@ ClaudeClaw is designed to run on your personal machine for your own use. A few t
 
 **File downloads fail**
 - Telegram caps downloads at 20MB — this is a Telegram API limit, not a ClaudeClaw one
+
+---
+
+## Common confusions
+
+**"Do I need the mega prompt / Rebuild_Prompt.md?"**
+No. There is no separate prompt to execute and no `Rebuild_Prompt.md` file. `CLAUDE.md` in the repo **is** the prompt — it loads automatically into every Claude Code session. You personalize it once (replace the `[BRACKETED]` placeholders with your info) and forget about it. Just clone the repo, run setup, and go. When you `git pull` updates, your personalized `.env` stays untouched (gitignored) and `CLAUDE.md` changes are merged by git.
+
+**"Does this use Claude Remote?"**
+No. ClaudeClaw has nothing to do with Anthropic's Remote product. It runs the `claude` CLI locally on your own machine (Mac, Linux, or Windows via WSL2) and pipes results to Telegram. No cloud VMs, no remote sessions.
+
+**"Does this work on Windows?"**
+Yes, through WSL2. Install WSL2, clone ClaudeClaw inside the WSL filesystem, and follow the normal Linux setup steps. The setup wizard detects Windows and offers WSL2 or PM2 options.
+
+**"What is GOOGLE_API_KEY for?"**
+Video analysis via Google Gemini. It is **not** for Gmail or Google Calendar (those use separate OAuth credentials via the gmail and google-calendar skills). Get it free at [aistudio.google.com](https://aistudio.google.com).
+
+**"Should I watch the Claude Code video first?"**
+Recommended but not required. The video covers how Claude Code works under the hood, which helps you understand what ClaudeClaw is actually doing. But you can set up ClaudeClaw first and watch it later.
+
+**"How do I update when a new version drops?"**
+`cd claudeclaw && git pull && npm install && npm run build` then restart. See [Updating ClaudeClaw](#updating-claudeclaw) above.
+
+**"Telegram formatting looks broken / not formatting properly"**
+ClaudeClaw converts Claude's Markdown to Telegram-safe HTML (bold, italic, code blocks, links). Telegram's formatting support is limited compared to a full web page. If something looks off, it's usually Telegram's rendering, not a bug. For very long or complex responses, the formatting is intentionally kept simple to avoid Telegram parse errors.
+
+**"Can I add extra security like 2FA?"**
+`ALLOWED_CHAT_ID` restricts the bot to your Telegram account, which is the default security layer. Community members have added Google Authenticator (TOTP) for tiered permissions (read-only vs elevated actions with time-limited re-auth). This isn't built in yet, but it's a straightforward addition to `handleMessage()` in `src/bot.ts` if you want that extra layer.
 
 ---
 

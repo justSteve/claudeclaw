@@ -220,6 +220,30 @@ async function main() {
     warn('Could not verify Claude auth. If you\'re not logged in, run: claude login');
   }
 
+  // Git config (user.name and user.email)
+  let gitName = '';
+  let gitEmail = '';
+  try { gitName = execSync('git config user.name', { stdio: 'pipe' }).toString().trim(); } catch { }
+  try { gitEmail = execSync('git config user.email', { stdio: 'pipe' }).toString().trim(); } catch { }
+  if (gitName && gitEmail) {
+    ok(`Git identity: ${gitName} <${gitEmail}>`);
+  } else {
+    warn('Git identity not configured — this will cause errors later');
+    console.log();
+    info('Run these two commands (use your own name and email):');
+    console.log(`  ${c.cyan}git config --global user.name "Your Name"${c.reset}`);
+    console.log(`  ${c.cyan}git config --global user.email "you@email.com"${c.reset}`);
+    console.log();
+    const fixNow = await confirm('Set them now?', true);
+    if (fixNow) {
+      const name = await ask('Your name');
+      const email = await ask('Your email');
+      if (name) { try { execSync(`git config --global user.name "${name}"`, { stdio: 'pipe' }); } catch { } }
+      if (email) { try { execSync(`git config --global user.email "${email}"`, { stdio: 'pipe' }); } catch { } }
+      if (name && email) ok(`Git identity set: ${name} <${email}>`);
+    }
+  }
+
   // Build check
   const distExists = fs.existsSync(path.join(PROJECT_ROOT, 'dist', 'index.js'));
   if (distExists) {
@@ -537,6 +561,14 @@ async function main() {
     section('Auto-start');
     info('Unknown platform. Start manually: npm start');
     info('Or use PM2: pm2 start dist/index.js --name claudeclaw && pm2 save');
+  }
+
+  // ── macOS permissions warning ──────────────────────────────────────────
+  if (PLATFORM === 'darwin') {
+    console.log();
+    warn('macOS may show "Node wants to access..." permission dialogs on first run.');
+    info('Keep an eye on your Mac screen and click Allow when prompted.');
+    info('If the bot hangs with no response, check for pending permission dialogs.');
   }
 
   // ── 14. WhatsApp daemon reminder ─────────────────────────────────────────

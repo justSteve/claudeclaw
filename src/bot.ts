@@ -1,8 +1,9 @@
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 
-import { runAgent, UsageInfo } from './agent.js';
+import { runAgent, UsageInfo, AgentProgressEvent } from './agent.js';
 import {
   ALLOWED_CHAT_ID,
+  CONTEXT_LIMIT,
   MAX_MESSAGE_LENGTH,
   TELEGRAM_BOT_TOKEN,
   TYPING_REFRESH_MS,
@@ -13,27 +14,48 @@ import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessa
 import { buildMemoryContext, saveConversationTurn } from './memory.js';
 
 // ── Context window tracking ──────────────────────────────────────────
-// Track the last known input_tokens per chat so we can warn proactively.
-// Claude Code's context window is ~200k tokens. Warn at 75%.
-const CONTEXT_WARN_THRESHOLD = 150_000;
+// Uses input_tokens from the last API call (= actual context window size:
+// system prompt + conversation history + tool results for that call).
+// Compares against CONTEXT_LIMIT (default 1M for Opus 4.6 1M, configurable).
+//
+// On a fresh session the base overhead (system prompt, skills, CLAUDE.md,
+// MCP tools) can be 200-400k+ tokens. We track that baseline per session
+// so the warning reflects conversation growth, not fixed overhead.
+const CONTEXT_WARN_PCT = 0.75; // Warn when conversation fills 75% of available space
 const lastUsage = new Map<string, UsageInfo>();
+const sessionBaseline = new Map<string, number>(); // sessionId -> first turn's input_tokens
 
 /**
  * Check if context usage is getting high and return a warning string, or null.
+ * Uses input_tokens (total context) not cache_read_input_tokens (partial metric).
  */
-function checkContextWarning(chatId: string, usage: UsageInfo): string | null {
+function checkContextWarning(chatId: string, sessionId: string | undefined, usage: UsageInfo): string | null {
   lastUsage.set(chatId, usage);
 
   if (usage.didCompact) {
     return '⚠️ Context window was auto-compacted this turn. Some earlier conversation may have been summarized. Consider /newchat + /respin if things feel off.';
   }
 
-  // Use the last single API call's cache read — this reflects actual context size.
-  // The cumulative cacheReadInputTokens overcounts on multi-step tool-use turns
-  // (each step re-reads the full cache, so 3 steps = 3x the real size).
-  if (usage.lastCallCacheRead > CONTEXT_WARN_THRESHOLD) {
-    const pct = Math.round((usage.lastCallCacheRead / 200_000) * 100);
-    return `⚠️ Context window at ~${pct}%. Getting close to the limit. Consider /newchat + /respin soon to avoid a crash.`;
+  const contextTokens = usage.lastCallInputTokens;
+  if (contextTokens <= 0) return null;
+
+  // Record baseline on first turn of session (system prompt overhead)
+  const baseKey = sessionId ?? chatId;
+  if (!sessionBaseline.has(baseKey)) {
+    sessionBaseline.set(baseKey, contextTokens);
+    // First turn — no warning, just establishing baseline
+    return null;
+  }
+
+  const baseline = sessionBaseline.get(baseKey)!;
+  const available = CONTEXT_LIMIT - baseline;
+  if (available <= 0) return null;
+
+  const conversationTokens = contextTokens - baseline;
+  const pct = Math.round((conversationTokens / available) * 100);
+
+  if (pct >= Math.round(CONTEXT_WARN_PCT * 100)) {
+    return `⚠️ Context window at ~${pct}% of available space (~${Math.round(conversationTokens / 1000)}k / ${Math.round(available / 1000)}k conversation tokens). Consider /newchat + /respin soon.`;
   }
 
   return null;
@@ -245,8 +267,20 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   );
 
   try {
-    const result = await runAgent(fullMessage, sessionId, () =>
-      void sendTyping(ctx.api, chatId),
+    // Progress callback: surface sub-agent lifecycle events to Telegram
+    const onProgress = (event: AgentProgressEvent) => {
+      if (event.type === 'task_started') {
+        void ctx.reply(`🔄 ${event.description}`).catch(() => {});
+      } else if (event.type === 'task_completed') {
+        void ctx.reply(`✓ ${event.description}`).catch(() => {});
+      }
+    };
+
+    const result = await runAgent(
+      fullMessage,
+      sessionId,
+      () => void sendTyping(ctx.api, chatId),
+      onProgress,
     );
 
     clearInterval(typingInterval);
@@ -294,11 +328,12 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
         result.usage.inputTokens,
         result.usage.outputTokens,
         result.usage.lastCallCacheRead,
+        result.usage.lastCallInputTokens,
         result.usage.totalCostUsd,
         result.usage.didCompact,
       );
 
-      const warning = checkContextWarning(chatIdStr, result.usage);
+      const warning = checkContextWarning(chatIdStr, activeSessionId, result.usage);
       if (warning) {
         await ctx.reply(warning);
       }
@@ -311,8 +346,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     const errMsg = err instanceof Error ? err.message : String(err);
     if (errMsg.includes('exited with code 1')) {
       const usage = lastUsage.get(chatIdStr);
-      const hint = usage
-        ? `Last known context: ~${Math.round((usage.lastCallCacheRead / 1000))}k tokens.`
+      const contextSize = usage?.lastCallInputTokens || usage?.lastCallCacheRead || 0;
+      const hint = contextSize > 0
+        ? `Last known context: ~${Math.round(contextSize / 1000)}k tokens.`
         : 'No usage data from previous turns.';
       await ctx.reply(
         `Context window likely exhausted. ${hint}\n\nUse /newchat to start fresh, then /respin to pull recent conversation back in.`,
@@ -346,7 +382,12 @@ export function createBot(): Bot {
   // /newchat — clear Claude session, start fresh
   bot.command('newchat', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
-    clearSession(ctx.chat!.id.toString());
+    const chatIdStr = ctx.chat!.id.toString();
+    const oldSessionId = getSession(chatIdStr);
+    clearSession(chatIdStr);
+    // Clear context baseline so next session starts clean
+    if (oldSessionId) sessionBaseline.delete(oldSessionId);
+    sessionBaseline.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');
   });

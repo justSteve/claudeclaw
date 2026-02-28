@@ -19,6 +19,18 @@ export interface UsageInfo {
    * context window size (cumulative overcounts on multi-step tool-use turns).
    */
   lastCallCacheRead: number;
+  /**
+   * The input_tokens from the LAST API call in the turn.
+   * This is the actual context window size: system prompt + conversation
+   * history + tool results for that call. Use this for context warnings.
+   */
+  lastCallInputTokens: number;
+}
+
+/** Progress event emitted during agent execution for Telegram feedback. */
+export interface AgentProgressEvent {
+  type: 'task_started' | 'task_completed';
+  description: string;
 }
 
 export interface AgentResult {
@@ -58,14 +70,16 @@ async function* singleTurn(text: string): AsyncGenerator<{
  * No explicit token needed if you're already logged in via `claude login`.
  * Optionally override with CLAUDE_CODE_OAUTH_TOKEN in .env.
  *
- * @param message   The user's text (may include transcribed voice prefix)
- * @param sessionId Claude Code session ID to resume, or undefined for new session
- * @param onTyping  Called every TYPING_REFRESH_MS while waiting — sends typing action to Telegram
+ * @param message    The user's text (may include transcribed voice prefix)
+ * @param sessionId  Claude Code session ID to resume, or undefined for new session
+ * @param onTyping   Called every TYPING_REFRESH_MS while waiting — sends typing action to Telegram
+ * @param onProgress Called when sub-agents start/complete — sends status updates to Telegram
  */
 export async function runAgent(
   message: string,
   sessionId: string | undefined,
   onTyping: () => void,
+  onProgress?: (event: AgentProgressEvent) => void,
 ): Promise<AgentResult> {
   // Read secrets from .env without polluting process.env.
   // CLAUDE_CODE_OAUTH_TOKEN is optional — the subprocess finds auth via ~/.claude/
@@ -86,6 +100,7 @@ export async function runAgent(
   let didCompact = false;
   let preCompactTokens: number | null = null;
   let lastCallCacheRead = 0;
+  let lastCallInputTokens = 0;
 
   // Refresh typing indicator on an interval while Claude works.
   // Telegram's "typing..." action expires after ~5s.
@@ -135,15 +150,33 @@ export async function runAgent(
         );
       }
 
-      // Track per-call cache reads from assistant message events.
+      // Track per-call token usage from assistant message events.
       // Each assistant message represents one API call; its usage reflects
       // that single call's context size (not cumulative across the turn).
       if (ev['type'] === 'assistant') {
         const msgUsage = (ev['message'] as Record<string, unknown>)?.['usage'] as Record<string, number> | undefined;
         const callCacheRead = msgUsage?.['cache_read_input_tokens'] ?? 0;
+        const callInputTokens = msgUsage?.['input_tokens'] ?? 0;
         if (callCacheRead > 0) {
           lastCallCacheRead = callCacheRead;
         }
+        if (callInputTokens > 0) {
+          lastCallInputTokens = callInputTokens;
+        }
+      }
+
+      // Sub-agent lifecycle events — surface to Telegram for user feedback
+      if (ev['type'] === 'system' && ev['subtype'] === 'task_started' && onProgress) {
+        const desc = (ev['description'] as string) ?? 'Sub-agent started';
+        onProgress({ type: 'task_started', description: desc });
+      }
+      if (ev['type'] === 'system' && ev['subtype'] === 'task_notification' && onProgress) {
+        const summary = (ev['summary'] as string) ?? 'Sub-agent finished';
+        const status = (ev['status'] as string) ?? 'completed';
+        onProgress({
+          type: 'task_completed',
+          description: status === 'failed' ? `Failed: ${summary}` : summary,
+        });
       }
 
       if (ev['type'] === 'result') {
@@ -160,12 +193,14 @@ export async function runAgent(
             didCompact,
             preCompactTokens,
             lastCallCacheRead,
+            lastCallInputTokens,
           };
           logger.info(
             {
               inputTokens: usage.inputTokens,
               cacheReadTokens: usage.cacheReadInputTokens,
               lastCallCacheRead: usage.lastCallCacheRead,
+              lastCallInputTokens: usage.lastCallInputTokens,
               costUsd: usage.totalCostUsd,
               didCompact,
             },

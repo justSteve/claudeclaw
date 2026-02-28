@@ -88,6 +88,7 @@ function createSchema(database: Database.Database): void {
       input_tokens    INTEGER NOT NULL DEFAULT 0,
       output_tokens   INTEGER NOT NULL DEFAULT 0,
       cache_read      INTEGER NOT NULL DEFAULT 0,
+      context_tokens  INTEGER NOT NULL DEFAULT 0,
       cost_usd        REAL NOT NULL DEFAULT 0,
       did_compact     INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL
@@ -136,6 +137,17 @@ export function initDatabase(): void {
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   createSchema(db);
+  runMigrations(db);
+}
+
+/** Add columns that may not exist in older databases. */
+function runMigrations(database: Database.Database): void {
+  // Add context_tokens column to token_usage (introduced for accurate context tracking)
+  const cols = database.prepare(`PRAGMA table_info(token_usage)`).all() as Array<{ name: string }>;
+  const hasContextTokens = cols.some((c) => c.name === 'context_tokens');
+  if (!hasContextTokens) {
+    database.exec(`ALTER TABLE token_usage ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
@@ -484,14 +496,15 @@ export function saveTokenUsage(
   inputTokens: number,
   outputTokens: number,
   cacheRead: number,
+  contextTokens: number,
   costUsd: number,
   didCompact: boolean,
 ): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `INSERT INTO token_usage (chat_id, session_id, input_tokens, output_tokens, cache_read, cost_usd, did_compact, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(chatId, sessionId ?? null, inputTokens, outputTokens, cacheRead, costUsd, didCompact ? 1 : 0, now);
+    `INSERT INTO token_usage (chat_id, session_id, input_tokens, output_tokens, cache_read, context_tokens, cost_usd, did_compact, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(chatId, sessionId ?? null, inputTokens, outputTokens, cacheRead, contextTokens, costUsd, didCompact ? 1 : 0, now);
 }
 
 export interface SessionTokenSummary {
@@ -499,6 +512,7 @@ export interface SessionTokenSummary {
   totalInputTokens: number;
   totalOutputTokens: number;
   lastCacheRead: number;
+  lastContextTokens: number;
   totalCostUsd: number;
   compactions: number;
   firstTurnAt: number;
@@ -530,20 +544,22 @@ export function getSessionTokenUsage(sessionId: string): SessionTokenSummary | n
 
   if (!row || row.turns === 0) return null;
 
-  // Get the most recent turn's cache_read — that's the actual context window size
+  // Get the most recent turn's context_tokens (actual context window size from last API call)
+  // Falls back to cache_read for backward compat with rows before the migration
   const lastRow = db
     .prepare(
-      `SELECT cache_read FROM token_usage
+      `SELECT cache_read, context_tokens FROM token_usage
        WHERE session_id = ?
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .get(sessionId) as { cache_read: number } | undefined;
+    .get(sessionId) as { cache_read: number; context_tokens: number } | undefined;
 
   return {
     turns: row.turns,
     totalInputTokens: row.totalInputTokens,
     totalOutputTokens: row.totalOutputTokens,
     lastCacheRead: lastRow?.cache_read ?? 0,
+    lastContextTokens: lastRow?.context_tokens ?? lastRow?.cache_read ?? 0,
     totalCostUsd: row.totalCostUsd,
     compactions: row.compactions,
     firstTurnAt: row.firstTurnAt,

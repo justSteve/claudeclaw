@@ -342,17 +342,22 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     clearInterval(typingInterval);
     logger.error({ err }, 'Agent error');
 
-    // Detect context window exhaustion (process exits with code 1 after long sessions)
     const errMsg = err instanceof Error ? err.message : String(err);
     if (errMsg.includes('exited with code 1')) {
+      // Exit code 1 can mean multiple things: context exhaustion, auth failure,
+      // nested session detection, etc. Check if we have prior usage data to
+      // distinguish context exhaustion from other failures.
       const usage = lastUsage.get(chatIdStr);
       const contextSize = usage?.lastCallInputTokens || usage?.lastCallCacheRead || 0;
-      const hint = contextSize > 0
-        ? `Last known context: ~${Math.round(contextSize / 1000)}k tokens.`
-        : 'No usage data from previous turns.';
-      await ctx.reply(
-        `Context window likely exhausted. ${hint}\n\nUse /newchat to start fresh, then /respin to pull recent conversation back in.`,
-      );
+      if (contextSize > 500_000) {
+        // High context usage — likely genuinely exhausted
+        await ctx.reply(
+          `Context window likely exhausted (last context: ~${Math.round(contextSize / 1000)}k tokens).\n\nUse /newchat to start fresh, then /respin to pull recent conversation back in.`,
+        );
+      } else {
+        // No significant context usage — probably a different error
+        await ctx.reply(`Claude process failed (exit code 1). This may be an auth or startup issue, not context exhaustion.\n\nTry /newchat. If it persists, check the server logs.`);
+      }
     } else {
       await ctx.reply('Something went wrong. Check the logs and try again.');
     }

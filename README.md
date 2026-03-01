@@ -387,6 +387,7 @@ Every skill in `~/.claude/skills/` loads on every session. Call them directly (`
 | `/forget` | Clear current session |
 | `/wa` | Open the WhatsApp interface |
 | `/slack` | Open the Slack interface |
+| `/dashboard` | Get a link to the live web dashboard |
 
 Any other `/command` passes through to Claude and routes to the matching skill.
 
@@ -413,6 +414,133 @@ r 2 <text>       quick-reply to conversation #2 without opening it
 ```
 
 Type anything that isn't a number or `r <text>` to exit Slack mode and return to normal Claude.
+
+---
+
+## Dashboard (optional)
+
+![Dashboard preview](assets/dashboard-preview.png)
+
+A real-time web dashboard that shows your scheduled tasks, memories, token costs, and system health. Open it from your phone via Telegram or from any browser.
+
+### How the dashboard works
+
+![Dashboard architecture](assets/dashboard-architecture.png)
+
+The dashboard is a lightweight web server (Hono, ~100 lines) running inside the bot process. It serves a single HTML page and JSON API endpoints that query your SQLite database directly. Nothing is sent to any external service.
+
+The flow:
+
+1. You send `/dashboard` in Telegram
+2. The bot replies with a clickable URL containing your auth token
+3. Your browser hits the Hono server on port 3141
+4. The server queries SQLite and returns live data
+5. The page auto-refreshes every 60 seconds
+
+If you add a **Cloudflare Tunnel** (optional, free), you can access the dashboard from your phone anywhere. Without a tunnel, it only works on `localhost`.
+
+### What the dashboard shows
+
+| Section | What's in it |
+|---------|-------------|
+| **Scheduled Tasks** | Every task with status (active/paused), human-readable schedule, live countdown to next run, collapsible last result |
+| **Memory Landscape** | Semantic/episodic memory counts (tap to drill down), salience distribution bar chart, fading memories list, most accessed list, 30-day memory creation timeline |
+| **System Health** | Circular context window gauge (green/amber/red), session turns + age + compactions, WhatsApp/Slack connection status |
+| **Tokens & Cost** | Today's spend and turn count, all-time total, 30-day cost line chart, cache hit rate doughnut |
+
+Single column on mobile, two columns on desktop. Auto-detects your device.
+
+### Enable the dashboard
+
+**Step 1 — Generate a token** (this is your dashboard password):
+
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+```
+
+**Step 2 — Add it to `.env`:**
+
+```
+DASHBOARD_TOKEN=paste_your_token_here
+```
+
+Optional settings:
+```
+DASHBOARD_PORT=3141          # default 3141, change if taken
+DASHBOARD_URL=               # leave blank for localhost, set for tunnel URL
+```
+
+**Step 3 — Rebuild and restart:**
+
+```bash
+npm run build
+npm start
+```
+
+**Step 4 — Open it.** Send `/dashboard` in Telegram, or go to:
+```
+http://localhost:3141/?token=YOUR_TOKEN&chatId=YOUR_CHAT_ID
+```
+
+That's it for local access. If you want to open the dashboard from your phone while away from your machine, add a Cloudflare Tunnel:
+
+### Access from your phone (Cloudflare Tunnel)
+
+**Quick tunnel** (free, 2 minutes, temporary URL that changes on restart):
+
+```bash
+brew install cloudflare/cloudflare/cloudflared
+cloudflared tunnel --url http://localhost:3141
+```
+
+Copy the printed URL into `DASHBOARD_URL` in `.env` and restart.
+
+**Named tunnel** (free, permanent URL, needs a $5-12/yr domain on Cloudflare):
+
+```bash
+cloudflared tunnel login                              # auth with Cloudflare
+cloudflared tunnel create claudeclaw                  # create the tunnel
+cloudflared tunnel route dns claudeclaw dash.yourdomain.com  # point DNS at it
+```
+
+Create `~/.cloudflared/config.yml`:
+```yaml
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /path/to/YOUR_TUNNEL_ID.json
+ingress:
+  - hostname: dash.yourdomain.com
+    service: http://localhost:3141
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel run claudeclaw                     # start the tunnel
+brew services start cloudflared                       # auto-start on boot
+```
+
+Set `DASHBOARD_URL=https://dash.yourdomain.com` in `.env` and restart.
+
+**Moving to a new machine?** Copy `~/.cloudflared/config.yml` and the credentials JSON. Run `cloudflared tunnel run claudeclaw`. Same URL, different machine, no DNS changes.
+
+### Things to know
+
+- **Token is in the URL.** Treat it like a password. Don't share screenshots of the address bar. The dashboard is read-only (nobody can modify anything through it), but task prompts and memory content are visible.
+- **No auth beyond the token.** No username/password, no session expiry. For personal use this is fine. For more, Cloudflare Access (free up to 50 users) can add login-based auth on top.
+- **Dashboard lives inside the bot process.** If the bot stops, the dashboard stops. Restart the bot and it comes back.
+- **SSL takes 1-5 minutes on brand new domains.** If the browser shows an error after setting up a named tunnel, wait and refresh.
+
+### Dashboard API
+
+All endpoints require `?token=YOUR_TOKEN`. Per-user endpoints also need `&chatId=YOUR_CHAT_ID`.
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /` | Dashboard HTML page |
+| `GET /api/tasks` | All scheduled tasks |
+| `GET /api/memories?chatId=` | Memory stats, fading list, top accessed, timeline |
+| `GET /api/memories/list?chatId=&sector=&limit=&offset=` | Paginated memory drill-down |
+| `GET /api/health?chatId=` | Context gauge, session stats, connections |
+| `GET /api/tokens?chatId=` | Cost stats, 30-day timeline, cache rate |
 
 ---
 
@@ -786,6 +914,9 @@ Browse more: [github.com/anthropics/claude-code](https://github.com/anthropics/c
 | `GOOGLE_CREDS_PATH` | No | Path to Google OAuth credentials.json (default: `~/.config/gmail/credentials.json`) |
 | `GMAIL_TOKEN_PATH` | No | Path to Gmail OAuth token (default: `~/.config/gmail/token.json`) |
 | `GCAL_TOKEN_PATH` | No | Path to Calendar OAuth token (default: `~/.config/calendar/token.json`) |
+| `DASHBOARD_TOKEN` | No | 48-char hex token for dashboard access |
+| `DASHBOARD_PORT` | No | Dashboard port (default: `3141`) |
+| `DASHBOARD_URL` | No | Public URL if using Cloudflare Tunnel |
 | `CLAUDE_CODE_OAUTH_TOKEN` | No | Override which Claude account is used |
 
 ---
@@ -977,6 +1108,8 @@ claudeclaw/
 │   ├── slack.ts           Slack API client (conversations, messages, send)
 │   ├── slack-cli.ts       CLI wrapper for Slack (used by the slack skill)
 │   ├── whatsapp.ts        WhatsApp client via whatsapp-web.js
+│   ├── dashboard.ts       Web dashboard server (Hono + API routes + token auth)
+│   ├── dashboard-html.ts  Dashboard HTML/CSS/JS (Tailwind + Chart.js, no build step)
 │   ├── config.ts          Reads .env safely (never pollutes process.env)
 │   ├── env.ts             Low-level .env file parser
 │   └── schedule-cli.ts    CLI tool for managing scheduled tasks

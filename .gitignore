@@ -35,3 +35,4 @@ workspace/
 .beads/bd.sock
 .beads/.local_version
 .beads/last-touched
+.beads/interactions.jsonl

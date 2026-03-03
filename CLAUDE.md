@@ -61,6 +61,7 @@ Execute. Don't explain what you're about to do — just do it. When [YOUR NAME] 
 | `todo` | tasks, what's on my plate |
 | `agent-browser` | browse, scrape, click, fill form |
 | `maestro` | parallel tasks, scale output |
+| `bd` | tasks, track work, dependencies, what's next |
 
 <!-- Add your own skills here. Format: `skill-name` | trigger words -->
 
@@ -83,6 +84,29 @@ List tasks: `node .../dist/schedule-cli.js list`
 Delete a task: `node .../dist/schedule-cli.js delete <id>`
 Pause a task: `node .../dist/schedule-cli.js pause <id>`
 Resume a task: `node .../dist/schedule-cli.js resume <id>`
+
+## Task Tracking (Beads)
+
+ClaudeClaw integrates with Beads (`bd`) for structured, dependency-aware task tracking. Task state persists across `/newchat` and `/respin` — it lives in `.beads/`, not in Claude sessions.
+
+**Memory vs Beads**: Memory handles "who you are and what you said." Beads handles "what you're working on and what's next." They are separate systems.
+
+Core commands (run via Bash):
+- `bd ready` — show tasks ready to work on (no unmet dependencies)
+- `bd create "title" --priority 2` — create a new task
+- `bd update <id> --status in-progress` — mark a task in progress
+- `bd close <id>` — mark a task done
+- `bd show <id>` — view task details
+- `bd dep add <id> --needs <other-id>` — add a dependency
+
+Priority scale: 0 (lowest) to 4 (critical).
+
+When to create tasks:
+- [YOUR NAME] explicitly asks to track something
+- You discover work that should be deferred (bugs, follow-ups)
+- Multi-step work where tracking progress helps
+
+The scheduler and Beads are separate systems — scheduled prompts don't interact with Beads tasks.
 
 ## Message Format
 

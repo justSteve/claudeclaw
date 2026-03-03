@@ -11,6 +11,7 @@ import {
 import { clearSession, getRecentConversation, getRecentMemories, getSession, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage } from './db.js';
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
+import { getBeadsContext, isBeadsAvailable, getReadyTasks } from './beads.js';
 import { buildMemoryContext, saveConversationTurn } from './memory.js';
 
 // ── Context window tracking ──────────────────────────────────────────
@@ -253,9 +254,13 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     'Processing message',
   );
 
-  // Build memory context and prepend to message
+  // Build memory + task context and prepend to message
   const memCtx = await buildMemoryContext(chatIdStr, message);
-  const fullMessage = memCtx ? `${memCtx}\n\n${message}` : message;
+  const beadsCtx = getBeadsContext();
+  const contextParts = [memCtx, beadsCtx].filter(Boolean);
+  const fullMessage = contextParts.length > 0
+    ? `${contextParts.join('\n\n')}\n\n${message}`
+    : message;
 
   const sessionId = getSession(chatIdStr);
 
@@ -455,6 +460,23 @@ export function createBot(): Bot {
     await ctx.reply(`<b>Recent memories</b>\n\n${lines}`, { parse_mode: 'HTML' });
   });
 
+  // /tasks — show ready tasks from Beads
+  bot.command('tasks', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
+    if (!isBeadsAvailable()) {
+      await ctx.reply('Beads not configured. Run bd init in the project directory.');
+      return;
+    }
+    const tasks = getReadyTasks();
+    if (!tasks) {
+      await ctx.reply('Could not fetch tasks.');
+      return;
+    }
+    for (const part of splitMessage(formatForTelegram(tasks))) {
+      await ctx.reply(part, { parse_mode: 'HTML' });
+    }
+  });
+
   // /forget — clear session (memory decay handles the rest)
   bot.command('forget', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
@@ -532,7 +554,7 @@ export function createBot(): Bot {
   });
 
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
-  const OWN_COMMANDS = new Set(['/start', '/newchat', '/respin', '/voice', '/memory', '/forget', '/chatid', '/wa', '/slack']);
+  const OWN_COMMANDS = new Set(['/start', '/newchat', '/respin', '/voice', '/memory', '/tasks', '/forget', '/chatid', '/wa', '/slack']);
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     const chatIdStr = ctx.chat!.id.toString();

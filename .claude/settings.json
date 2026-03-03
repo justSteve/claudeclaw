@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(echo:*)",
+      "Bash(pwd:*)",
+      "Bash(which:*)",
+      "Bash(test:*)",
+      "Bash(sleep:*)",
+      "Bash(true:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(gt:*)",
+      "Bash(bd:*)",
+      "Bash(bun:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(curl:*)",
+      "Bash(mkdir:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(node:*)",
+      "Bash(timeout:*)",
+      "mcp__fetch__fetch",
+      "mcp__github__*",
+      "Read(*)",
+      "Glob(*)",
+      "Grep(*)"
+    ]
+  }
+}

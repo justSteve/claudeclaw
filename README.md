@@ -311,6 +311,44 @@ The skill reads `GOOGLE_API_KEY` from the environment automatically.
 
 ---
 
+### Google Workspace CLI (optional)
+
+> ClaudeClaw ships with bundled Gmail and Google Calendar skills that work great out of the box. This is an **optional alternative** if you want broader Google Workspace access from a single tool.
+
+[![Google Workspace CLI announcement](assets/workspace-cli-tweet.png)](https://x.com/addyosmani/status/2029372736267805081)
+
+Google released an official CLI that covers Drive, Gmail, Calendar, Sheets, Docs, Chat, Admin, and every other Workspace API in one tool. It's dynamically built from Google Discovery Service and includes 40+ agent skills out of the box.
+
+**Repo:** [github.com/googleworkspace/cli](https://github.com/googleworkspace/cli)
+
+<details>
+<summary><strong>What's a CLI, and how is it different from a skill or MCP?</strong></summary>
+
+There are three ways Claude can interact with external services. They all achieve similar things, but work differently under the hood:
+
+| | What it is | How Claude uses it |
+|---|---|---|
+| **CLI** (Command Line Interface) | A program you install on your machine that runs commands in the terminal. Think of it like a text-based app. | Claude runs terminal commands like `workspace drive list` or `workspace gmail send` through the Bash tool. It's the same as if you typed those commands yourself. |
+| **Skill** | A markdown file (`.md`) that teaches Claude how to do something specific, usually by combining CLI commands, API calls, or code into a workflow. | Claude reads the skill file and follows its instructions. ClaudeClaw's bundled Gmail skill, for example, tells Claude which Python scripts to run and how to format the output. |
+| **MCP** (Model Context Protocol) | A server that runs in the background and gives Claude access to tools directly, without going through the terminal. | Claude calls MCP tools natively, like calling a function. No terminal commands needed. It's the most seamless option but requires a running MCP server. |
+
+In short: a CLI is a tool you run in the terminal, a skill is a set of instructions that tells Claude how to use tools, and an MCP is a live server that gives Claude direct access to tools. They can all do similar things, just with different tradeoffs in setup and flexibility.
+
+</details>
+
+**What it gives you beyond the bundled skills:**
+- Google Drive (upload, download, search, share)
+- Sheets and Docs (read, write, create)
+- Chat (send messages, manage spaces)
+- Admin (user management, org units)
+- Every other Workspace API, auto-discovered
+
+**When to use it:** If you want your assistant to interact with Google Workspace services beyond email and calendar, or if you prefer a single unified CLI over individual skills.
+
+**Setup:** Follow the install instructions in the repo, then reference it in your `CLAUDE.md` so your assistant knows it's available.
+
+---
+
 ## Default behaviors
 
 ### Voice notes → text reply (default)
@@ -1252,6 +1290,101 @@ claudeclaw/
 2. `.env` — add your API keys (the setup wizard does this for you)
 
 Everything else runs without modification.
+
+---
+
+## Agents (optional)
+
+ClaudeClaw supports running **specialist agents** alongside the main bot. Each agent is its own Telegram bot with a focused CLAUDE.md, its own Claude Code session, and its own chat.
+
+All agents share the same machine, the same SQLite database, the same global skills, and the same `.env` secrets. A **hive mind** table lets agents log what they did so any agent can see cross-agent activity.
+
+### Quick start
+
+```bash
+npm run agent:create
+```
+
+This interactive wizard will:
+1. Let you pick a template (comms, content, ops, research, or blank)
+2. Ask you to create a bot via @BotFather in Telegram
+3. Save the token to `.env`
+4. Create the agent config at `agents/<name>/agent.yaml`
+5. Build and optionally test-start the agent
+
+### Start an agent
+
+```bash
+npm start -- --agent comms
+```
+
+Or as a background service (auto-restarts, runs on boot):
+
+```bash
+bash scripts/agent-service.sh install comms
+```
+
+### Available templates
+
+| Agent | Role | Default model |
+|-------|------|---------------|
+| `comms` | Email, Slack, WhatsApp, YouTube comments, Skool, LinkedIn | Sonnet |
+| `content` | YouTube scripts, LinkedIn posts, trend research | Sonnet |
+| `ops` | Calendar, billing, Stripe, Gumroad, admin | Sonnet |
+| `research` | Deep web research, academic, competitive intel | Sonnet |
+
+### Create your own agent
+
+1. Copy `agents/_template/` to `agents/myagent/`
+2. Edit `CLAUDE.md` with your agent's role and personality
+3. Copy `agent.yaml.example` to `agent.yaml` and fill in the bot token env var name
+4. Create a bot via @BotFather and add the token to `.env`
+5. `npm start -- --agent myagent`
+
+### How it works
+
+- `npm start` with no flags = main bot, unchanged. Zero breaking changes.
+- `npm start -- --agent comms` loads `agents/comms/CLAUDE.md` instead of the root `CLAUDE.md`.
+- Each agent gets its own bot token, its own Claude Code session, and its own scheduled tasks.
+- The dashboard shows all agents, their status, and the hive mind feed.
+- Agents share the SQLite database (WAL mode handles concurrent access).
+
+### Hive mind
+
+Agents log meaningful actions to the `hive_mind` table. Any agent can query it:
+
+```sql
+SELECT agent_id, action, summary, datetime(created_at, 'unixepoch')
+FROM hive_mind ORDER BY created_at DESC LIMIT 20;
+```
+
+The dashboard shows the hive mind feed in real-time.
+
+### Obsidian integration
+
+Agents can be assigned Obsidian vault folders in `agent.yaml`. Open tasks from those folders are auto-injected as lightweight context before every message:
+
+```yaml
+obsidian:
+  vault: /path/to/your/obsidian/vault
+  folders:
+    - Projects/
+    - Inbox/
+  read_only:
+    - Daily Notes/
+```
+
+### Scheduled tasks with agents
+
+Cron jobs are agent-scoped. A task created in the comms agent only fires in the comms agent's process:
+
+```bash
+# Create a task for the comms agent
+node dist/schedule-cli.js create "check youtube comments" "0 */4 * * *" --agent comms
+
+# List tasks for a specific agent
+node dist/schedule-cli.js list --agent comms
+```
 
 ---
 

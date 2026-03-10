@@ -17,7 +17,7 @@ import {
   agentSystemPrompt,
   TYPING_REFRESH_MS,
 } from './config.js';
-import { clearSession, getRecentConversation, getRecentMemories, getSession, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage } from './db.js';
+import { clearSession, getRecentConversation, getRecentMemories, getSession, getSessionConversation, logToHiveMind, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage } from './db.js';
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, saveConversationTurn } from './memory.js';
@@ -603,14 +603,52 @@ export function createBot(): Bot {
     return ctx.reply('ClaudeClaw online. What do you need?');
   });
 
-  // /newchat — clear Claude session, start fresh
+  // /newchat — clear Claude session, start fresh + auto-commit to hive mind
   bot.command('newchat', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
     const chatIdStr = ctx.chat!.id.toString();
     const oldSessionId = getSession(chatIdStr, AGENT_ID);
+
+    // Auto-commit session summary to hive mind (async, don't block the user)
+    if (oldSessionId) {
+      const sessionToSummarize = oldSessionId;
+      sessionBaseline.delete(oldSessionId);
+
+      // Fire-and-forget: ask the agent to produce a one-liner summary
+      (async () => {
+        try {
+          const turns = getSessionConversation(sessionToSummarize, 40);
+          if (turns.length < 2) return;
+
+          const result = await runAgent(
+            'Summarize what we accomplished this session in ONE short sentence (under 100 chars). No preamble, no quotes, just the summary. Example: "Drafted LinkedIn post about AI agents and scheduled Gmail triage task"',
+            sessionToSummarize,
+            () => {},  // no typing indicator
+            undefined,
+            undefined,
+            undefined,
+          );
+
+          const summary = result.text?.trim();
+          if (summary && summary.length > 0) {
+            logToHiveMind(AGENT_ID, chatIdStr, 'session_end', summary.slice(0, 300));
+            logger.info({ agentId: AGENT_ID, summary }, 'Hive mind auto-commit (LLM summary)');
+          }
+        } catch (err) {
+          // Fallback: log a basic summary from conversation turns
+          try {
+            const turns = getSessionConversation(sessionToSummarize, 40);
+            if (turns.length >= 2) {
+              const firstUserMsg = turns.find(t => t.role === 'user')?.content?.slice(0, 100) || 'unknown';
+              logToHiveMind(AGENT_ID, chatIdStr, 'session_end', `${turns.length} turns starting with: ${firstUserMsg}`);
+            }
+          } catch { /* give up */ }
+          logger.error({ err }, 'Hive mind LLM summary failed, used fallback');
+        }
+      })();
+    }
+
     clearSession(chatIdStr, AGENT_ID);
-    // Clear context baseline so next session starts clean
-    if (oldSessionId) sessionBaseline.delete(oldSessionId);
     sessionBaseline.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');

@@ -72,6 +72,8 @@ When [YOUR NAME] asks to run something on a schedule, create a scheduled task us
 node [PATH TO CLAUDECLAW]/dist/schedule-cli.js create "PROMPT" "CRON"
 ```
 
+**Agent routing:** The schedule-cli auto-detects which agent you are via the `CLAUDECLAW_AGENT_ID` environment variable. Tasks you create will automatically be assigned to your agent. If you need to override, use `--agent <id>`.
+
 Common cron patterns:
 - Daily at 9am: `0 9 * * *`
 - Every Monday at 9am: `0 9 * * 1`

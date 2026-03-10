@@ -199,6 +199,15 @@ function runMigrations(database: Database.Database): void {
   if (!convoCols.some((c) => c.name === 'agent_id')) {
     database.exec(`ALTER TABLE conversation_log ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'`);
   }
+
+  // Task state machine: add started_at and last_status columns
+  const taskColNames = taskCols.map((c) => c.name);
+  if (!taskColNames.includes('started_at')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN started_at INTEGER`);
+  }
+  if (!taskColNames.includes('last_status')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN last_status TEXT`);
+  }
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
@@ -312,8 +321,11 @@ export interface ScheduledTask {
   next_run: number;
   last_run: number | null;
   last_result: string | null;
-  status: 'active' | 'paused';
+  status: 'active' | 'paused' | 'running';
   created_at: number;
+  agent_id: string;
+  started_at: number | null;
+  last_status: 'success' | 'failed' | 'timeout' | null;
 }
 
 export function createScheduledTask(
@@ -350,15 +362,30 @@ export function getAllScheduledTasks(agentId?: string): ScheduledTask[] {
     .all() as ScheduledTask[];
 }
 
+export function markTaskRunning(id: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE scheduled_tasks SET status = 'running', started_at = ? WHERE id = ?`,
+  ).run(now, id);
+}
+
 export function updateTaskAfterRun(
   id: string,
   nextRun: number,
   result: string,
+  lastStatus: 'success' | 'failed' | 'timeout' = 'success',
 ): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `UPDATE scheduled_tasks SET last_run = ?, next_run = ?, last_result = ? WHERE id = ?`,
-  ).run(now, nextRun, result.slice(0, 500), id);
+    `UPDATE scheduled_tasks SET status = 'active', last_run = ?, next_run = ?, last_result = ?, last_status = ?, started_at = NULL WHERE id = ?`,
+  ).run(now, nextRun, result.slice(0, 500), lastStatus, id);
+}
+
+export function resetStuckTasks(agentId: string): number {
+  const result = db.prepare(
+    `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE status = 'running' AND agent_id = ?`,
+  ).run(agentId);
+  return result.changes;
 }
 
 export function deleteScheduledTask(id: string): void {
@@ -808,6 +835,19 @@ export function getHiveMindEntries(limit = 20, agentId?: string): HiveMindEntry[
   return db
     .prepare('SELECT * FROM hive_mind ORDER BY created_at DESC LIMIT ?')
     .all(limit) as HiveMindEntry[];
+}
+
+/**
+ * Get conversation turns for a specific session, ordered chronologically.
+ * Used for hive-mind auto-commit on session end.
+ */
+export function getSessionConversation(sessionId: string, limit = 40): ConversationTurn[] {
+  return db
+    .prepare(
+      `SELECT * FROM conversation_log WHERE session_id = ?
+       ORDER BY created_at ASC LIMIT ?`,
+    )
+    .all(sessionId, limit) as ConversationTurn[];
 }
 
 export function getAgentTokenStats(agentId: string): { todayCost: number; todayTurns: number; allTimeCost: number } {

@@ -16,6 +16,9 @@ import { setTelegramConnected, setBotInfo } from './state.js';
 const agentFlagIndex = process.argv.indexOf('--agent');
 const AGENT_ID = agentFlagIndex !== -1 ? process.argv[agentFlagIndex + 1] : 'main';
 
+// Export AGENT_ID to env so child processes (schedule-cli, etc.) inherit it
+process.env.CLAUDECLAW_AGENT_ID = AGENT_ID;
+
 if (AGENT_ID !== 'main') {
   const agentConfig = loadAgentConfig(AGENT_ID);
   const agentDir = path.join(PROJECT_ROOT, 'agents', AGENT_ID);

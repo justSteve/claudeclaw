@@ -20,6 +20,19 @@ To check what other agents have done:
 sqlite3 store/claudeclaw.db "SELECT agent_id, action, summary, datetime(created_at, 'unixepoch') FROM hive_mind ORDER BY created_at DESC LIMIT 20;"
 ```
 
+## Scheduling Tasks
+
+You can create scheduled tasks that run in YOUR agent process (not the main bot):
+
+```bash
+node [PATH TO CLAUDECLAW]/dist/schedule-cli.js create "PROMPT" "CRON"
+```
+
+The agent ID is auto-detected from your environment via `CLAUDECLAW_AGENT_ID`. Tasks you create will fire from your agent's scheduler, not the main bot.
+
+List tasks: `node [PATH TO CLAUDECLAW]/dist/schedule-cli.js list`
+Delete: `node [PATH TO CLAUDECLAW]/dist/schedule-cli.js delete <id>`
+
 ## Rules
 - You have access to all global skills in ~/.claude/skills/
 - Keep responses tight and actionable

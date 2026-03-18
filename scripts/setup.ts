@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import crypto from 'crypto';
 import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -23,6 +24,11 @@ const PROJECT_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
 );
+
+function expandHome(p: string): string {
+  if (p.startsWith('~/') || p === '~') return path.join(os.homedir(), p.slice(1));
+  return p;
+}
 
 // ── Banner ───────────────────────────────────────────────────────────────────
 function loadBanner(): string {
@@ -291,6 +297,15 @@ async function main() {
     console.log();
     info('No API key needed — it uses your existing WhatsApp account.');
     console.log();
+
+    console.log(`  ${c.bold}Message security:${c.reset}`);
+    console.log();
+    bullet('All message bodies are encrypted at rest (AES-256-GCM)');
+    bullet('Messages auto-delete after 3 days');
+    bullet('The database and session files are gitignored and never committed');
+    bullet('Encryption key is stored in your .env (auto-generated if not set)');
+    console.log();
+
     warn('Note: WhatsApp may occasionally disconnect and require a re-scan.');
     console.log();
   }
@@ -330,7 +345,59 @@ async function main() {
     }
   }
 
-  // ── 6. CLAUDE.md personalization ─────────────────────────────────────────
+  // ── 6. Config directory (CLAUDECLAW_CONFIG) ──────────────────────────────
+  section('Config directory (CLAUDECLAW_CONFIG)');
+
+  info('Personal config files (CLAUDE.md, agent configs) live outside the repo');
+  info('so they are never accidentally committed. Defaults to ~/.claudeclaw');
+  console.log();
+
+  const envForConfig = parseEnvFile(path.join(PROJECT_ROOT, '.env'));
+  const defaultConfigDir = expandHome(
+    envForConfig.CLAUDECLAW_CONFIG || '~/.claudeclaw',
+  );
+  info(`Current path: ${defaultConfigDir}`);
+  console.log();
+
+  let claudeclawConfigDir = defaultConfigDir;
+  const changeConfigDir = await confirm('Change this path?', false);
+  if (changeConfigDir) {
+    const input = await ask('Config directory', '~/.claudeclaw');
+    claudeclawConfigDir = expandHome(input.trim() || '~/.claudeclaw');
+  }
+
+  // If the chosen directory already exists, notify and let user decide
+  if (fs.existsSync(claudeclawConfigDir)) {
+    const hasClaudeMd = fs.existsSync(path.join(claudeclawConfigDir, 'CLAUDE.md'));
+    ok(`Directory already exists${hasClaudeMd ? ' — CLAUDE.md found' : ' — no CLAUDE.md yet'}`);
+    const useExisting = await confirm('Use this directory as-is?', true);
+    if (!useExisting) {
+      const newPath = await ask('Enter a different path');
+      if (newPath.trim()) claudeclawConfigDir = expandHome(newPath.trim());
+    }
+  }
+
+  // Create the directory if needed
+  if (!fs.existsSync(claudeclawConfigDir)) {
+    fs.mkdirSync(claudeclawConfigDir, { recursive: true });
+    ok(`Created ${claudeclawConfigDir}`);
+  }
+
+  // Ensure CLAUDE.md exists in the config dir (copy from example if needed)
+  const claudeMdDest = path.join(claudeclawConfigDir, 'CLAUDE.md');
+  if (!fs.existsSync(claudeMdDest)) {
+    const exampleSrc = path.join(PROJECT_ROOT, 'CLAUDE.md.example');
+    if (fs.existsSync(exampleSrc)) {
+      fs.copyFileSync(exampleSrc, claudeMdDest);
+      ok(`Created CLAUDE.md from template → ${claudeMdDest}`);
+    } else {
+      warn(`No CLAUDE.md.example found — create ${claudeMdDest} manually`);
+    }
+  } else {
+    ok(`CLAUDE.md exists at ${claudeMdDest}`);
+  }
+
+  // ── 6b. CLAUDE.md personalization ────────────────────────────────────────
   section('Personalize your assistant (CLAUDE.md)');
 
   info('CLAUDE.md is the personality and context file loaded into every session.');
@@ -347,12 +414,11 @@ async function main() {
 
   const openClaude = await confirm('Open CLAUDE.md now to edit it?', true);
   if (openClaude) {
-    const claudePath = path.join(PROJECT_ROOT, 'CLAUDE.md');
     const editor = process.env.EDITOR || (PLATFORM === 'win32' ? 'notepad' : 'nano');
     try {
-      spawnSync(editor, [claudePath], { stdio: 'inherit' });
+      spawnSync(editor, [claudeMdDest], { stdio: 'inherit' });
     } catch {
-      warn(`Could not open ${editor}. Edit manually: ${claudePath}`);
+      warn(`Could not open ${editor}. Edit manually: ${claudeMdDest}`);
     }
   }
 
@@ -392,6 +458,9 @@ async function main() {
 
   const envPath = path.join(PROJECT_ROOT, '.env');
   const env: Record<string, string> = fs.existsSync(envPath) ? parseEnvFile(envPath) : {};
+
+  // Persist CLAUDECLAW_CONFIG determined in section 6
+  env.CLAUDECLAW_CONFIG = claudeclawConfigDir;
 
   let botUsername = '';
   if (env.TELEGRAM_BOT_TOKEN) {
@@ -526,6 +595,9 @@ async function main() {
     `TELEGRAM_BOT_TOKEN=${env.TELEGRAM_BOT_TOKEN || ''}`,
     `ALLOWED_CHAT_ID=${env.ALLOWED_CHAT_ID || ''}`,
     '',
+    '# ── Config directory (personal config, never committed) ───────',
+    `CLAUDECLAW_CONFIG=${env.CLAUDECLAW_CONFIG || ''}`,
+    '',
     '# ── Claude auth (optional — uses claude login by default) ─────',
     `ANTHROPIC_API_KEY=${env.ANTHROPIC_API_KEY || ''}`,
     '',
@@ -536,10 +608,14 @@ async function main() {
     '',
     '# ── Integrations ──────────────────────────────────────────────',
     `GOOGLE_API_KEY=${env.GOOGLE_API_KEY || ''}`,
+    '',
+    '# ── Database Encryption ───────────────────────────────────────',
+    '# Auto-generated. DO NOT share or commit.',
+    `DB_ENCRYPTION_KEY=${env.DB_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex')}`,
   ];
 
   // Preserve unknown keys
-  const known = new Set(['TELEGRAM_BOT_TOKEN','ALLOWED_CHAT_ID','ANTHROPIC_API_KEY','GROQ_API_KEY','ELEVENLABS_API_KEY','ELEVENLABS_VOICE_ID','GOOGLE_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','WHATSAPP_ENABLED']);
+  const known = new Set(['TELEGRAM_BOT_TOKEN','ALLOWED_CHAT_ID','CLAUDECLAW_CONFIG','ANTHROPIC_API_KEY','GROQ_API_KEY','ELEVENLABS_API_KEY','ELEVENLABS_VOICE_ID','GOOGLE_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','WHATSAPP_ENABLED','DB_ENCRYPTION_KEY']);
   for (const [k, v] of Object.entries(env)) {
     if (!known.has(k) && v) lines.push(`${k}=${v}`);
   }
@@ -583,9 +659,55 @@ async function main() {
     console.log();
     info('The session saves to store/waweb/ and persists across restarts.');
     info('Then use /wa in Telegram to access your chats.');
+    console.log();
+    ok('Message bodies are encrypted at rest and auto-deleted after 3 days.');
+    ok('The store/ directory is gitignored and will never be committed.');
   }
 
-  // ── 15. Summary ───────────────────────────────────────────────────────────
+  // ── 15. Multi-agent setup (optional) ────────────────────────────────────
+  section('Agent team (optional)');
+
+  info('ClaudeClaw can run specialist agents alongside the main bot.');
+  info('Each agent is its own Telegram bot with a focused role, its own');
+  info('context window, and its own chat on your phone.');
+  console.log();
+  bullet('Each agent gets its own 1M context window (separate from main)');
+  bullet('Agents default to Sonnet (cheaper) — use /model opus when needed');
+  bullet('Each agent has its own CLAUDE.md personality and Obsidian folders');
+  bullet('A shared hive mind lets agents see what others have done');
+  bullet('All agents inherit every feature: voice, files, skills, scheduling');
+  console.log();
+
+  const wantAgents = await confirm('Set up specialist agents?', false);
+  if (wantAgents) {
+    console.log();
+    info('Available templates:');
+    console.log(`  1. ${c.bold}comms${c.reset}     — email, Slack, WhatsApp, YouTube comments, Skool, LinkedIn`);
+    console.log(`  2. ${c.bold}content${c.reset}   — YouTube scripts, LinkedIn posts, trend research`);
+    console.log(`  3. ${c.bold}ops${c.reset}       — calendar, billing, Stripe, Gumroad, admin`);
+    console.log(`  4. ${c.bold}research${c.reset}  — deep web research, academic, competitive intel`);
+    console.log();
+    info('For each agent, you\'ll need to create a Telegram bot via @BotFather.');
+    info('Open Telegram → @BotFather → /newbot → choose a name and username.');
+    console.log();
+    info('Run the agent creation wizard after setup finishes:');
+    console.log();
+    console.log(`  ${c.cyan}npm run agent:create${c.reset}`);
+    console.log();
+    info('It walks you through template selection, bot creation, and configuration.');
+    info('Then start each agent in its own terminal:');
+    console.log();
+    console.log(`  ${c.cyan}npm start -- --agent comms${c.reset}      # Terminal 2`);
+    console.log(`  ${c.cyan}npm start -- --agent content${c.reset}    # Terminal 3`);
+    console.log(`  ${c.cyan}npm start -- --agent ops${c.reset}        # Terminal 4`);
+    console.log();
+    info('Or install as background services:');
+    console.log(`  ${c.cyan}bash scripts/agent-service.sh install comms${c.reset}`);
+    console.log();
+    info('Full guide: see "Creating a team of agents" in the README.');
+  }
+
+  // ── 16. Summary ───────────────────────────────────────────────────────────
   console.log();
   console.log(`  ${c.cyan}╔════════════════════════════════════════════╗${c.reset}`);
   console.log(`  ${c.cyan}║${c.reset}${c.bold}           ClaudeClaw is ready!             ${c.reset}${c.cyan}║${c.reset}`);

@@ -26,7 +26,16 @@ import { computeNextRun } from './scheduler.js';
 
 initDatabase();
 
-const [, , command, ...rest] = process.argv;
+// Parse --agent flag from anywhere in argv, fall back to CLAUDECLAW_AGENT_ID env var
+const agentFlagIdx = process.argv.indexOf('--agent');
+const cliAgentId = agentFlagIdx !== -1
+  ? process.argv[agentFlagIdx + 1] ?? 'main'
+  : process.env.CLAUDECLAW_AGENT_ID ?? 'main';
+// Remove --agent and its value from rest args (only filter when flag is present)
+const cleanedArgv = agentFlagIdx !== -1
+  ? process.argv.filter((_, i) => i !== agentFlagIdx && i !== agentFlagIdx + 1)
+  : [...process.argv];
+const [, , command, ...rest] = cleanedArgv;
 
 function formatDate(unix: number | null): string {
   if (!unix) return 'never';
@@ -57,9 +66,10 @@ switch (command) {
     }
 
     const id = randomBytes(4).toString('hex');
-    createScheduledTask(id, prompt, cron, nextRun);
+    createScheduledTask(id, prompt, cron, nextRun, cliAgentId);
 
     console.log(`Task created: ${id}`);
+    console.log(`Agent:        ${cliAgentId}`);
     console.log(`Prompt:       ${prompt}`);
     console.log(`Schedule:     ${cron}`);
     console.log(`Next run:     ${formatDate(nextRun)}`);
@@ -67,7 +77,7 @@ switch (command) {
   }
 
   case 'list': {
-    const tasks = getAllScheduledTasks();
+    const tasks = getAllScheduledTasks(cliAgentId === 'main' ? undefined : cliAgentId);
     if (tasks.length === 0) {
       console.log('No scheduled tasks.');
       break;

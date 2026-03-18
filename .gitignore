@@ -8,9 +8,18 @@ data/
 # Environment — never commit API keys
 .env
 
-# Runtime data — personal, not for sharing
+# Runtime data — NEVER commit. Contains WhatsApp/Slack messages,
+# session tokens, conversation logs, and database files.
 store/
 workspace/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Migration state — local only
+migrations/.applied.json
 
 # Logs
 *.log
@@ -36,3 +45,11 @@ workspace/
 .beads/.local_version
 .beads/last-touched
 .beads/interactions.jsonl
+
+# Personal scripts — not for sharing
+scripts/waste-reminder.sh
+
+# Personal config — lives in CLAUDECLAW_CONFIG (default ~/.claudeclaw)
+CLAUDE.md
+agents/*/agent.yaml
+agents/*/CLAUDE.md
